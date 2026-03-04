@@ -1,203 +1,151 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html>
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>AliExpress Image Finder Pro</title>
-
-<link rel="stylesheet" href="style.css" />
-
-<!-- Socket.IO -->
+<meta charset="UTF-8">
+<title>AI AliExpress Finder</title>
 <script src="/socket.io/socket.io.js"></script>
+<style>
+body {
+  margin:0;
+  background:#000;
+  color:white;
+  font-family:Arial;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+}
+.container { width:500px; text-align:center; }
 
+button {
+  background:#00ff88;
+  border:none;
+  padding:15px;
+  width:100%;
+  font-size:18px;
+  font-weight:bold;
+  border-radius:10px;
+  cursor:pointer;
+}
+button:hover { opacity:0.8; }
+
+.progress {
+  width:100%;
+  background:#111;
+  border-radius:20px;
+  margin-top:15px;
+}
+.bar {
+  height:20px;
+  width:0%;
+  background:linear-gradient(90deg,#00ff88,#00ccff);
+  border-radius:20px;
+  transition:0.4s;
+}
+
+.spinner {
+  display:none;
+  margin-top:10px;
+}
+
+.logs {
+  margin-top:15px;
+  max-height:120px;
+  overflow:auto;
+  background:#111;
+  padding:10px;
+  border-radius:10px;
+}
+
+.product {
+  background:#111;
+  margin:10px 0;
+  padding:10px;
+  border-radius:10px;
+}
+
+.score-green { color:#00ff88; }
+.score-orange { color:orange; }
+.score-red { color:red; }
+
+</style>
 </head>
 <body>
 
 <div class="container">
 
-<h1>🖼 AliExpress Image Finder</h1>
+<h2>🔥 AI AliExpress Finder</h2>
 
-<!-- ========================================= -->
-<!-- UPLOAD FORM -->
-<!-- ========================================= -->
+<input type="text" id="imgbb" placeholder="IMGBB KEY">
+<input type="text" id="serpapi" placeholder="SERPAPI KEY">
+<input type="text" id="openai" placeholder="OPENAI KEY">
+<input type="file" id="image">
 
-<div class="card">
+<button onclick="start()">START</button>
 
-<h2>📤 Upload Image(s)</h2>
+<div class="progress"><div class="bar" id="bar"></div></div>
+<div class="spinner" id="spinner">⏳ Analyzing...</div>
 
-<form id="uploadForm">
-
-<input type="file"
-       name="images"
-       multiple
-       accept="image/*" />
-
-<button type="submit">
-🚀 Analyze
-</button>
-
-</form>
-
-</div>
-
-<!-- ========================================= -->
-<!-- LIVE LOGS -->
-<!-- ========================================= -->
-
-<div class="card">
-
-<h2>📊 Live Logs</h2>
-
-<div id="logs" class="log-box">
-<p>Waiting for analysis...</p>
-</div>
-
-</div>
-
-<!-- ========================================= -->
-<!-- RESULTS -->
-<!-- ========================================= -->
-
-<div class="card">
-
-<h2>🎯 Results</h2>
-
+<div class="logs" id="logs"></div>
 <div id="results"></div>
 
 </div>
 
-</div>
-
-<!-- ========================================= -->
-<!-- SCRIPT -->
-<!-- ========================================= -->
-
 <script>
-
 const socket = io();
-let socketId = null;
+let socketId;
 
-/*
-====================================================
-SOCKET CONNECTION
-====================================================
-*/
-
-socket.on("connected", (data) => {
-  socketId = data.socketId;
-  console.log("Socket connected:", socketId);
+socket.on("connect", () => {
+  socketId = socket.id;
 });
 
-/*
-====================================================
-LIVE LOGS
-====================================================
-*/
-
-socket.on("log", (data) => {
-
-  const logsDiv = document.getElementById("logs");
-
-  const line = document.createElement("p");
-
-  line.innerHTML = `
-    <span style="color:#888">
-      [${new Date(data.time).toLocaleTimeString()}]
-    </span>
-    ${data.message}
-  `;
-
-  logsDiv.appendChild(line);
-  logsDiv.scrollTop = logsDiv.scrollHeight;
-
+socket.on("log", msg => {
+  document.getElementById("logs").innerHTML += msg + "<br>";
+  document.getElementById("logs").scrollTop = 9999;
 });
 
-/*
-====================================================
-FORM SUBMIT
-====================================================
-*/
-
-const form = document.getElementById("uploadForm");
-const resultsDiv = document.getElementById("results");
-
-form.addEventListener("submit", async (e) => {
-
-  e.preventDefault();
-
-  resultsDiv.innerHTML = "";
-  document.getElementById("logs").innerHTML =
-    "<p>🚀 Starting analysis...</p>";
-
-  const formData = new FormData(form);
-  formData.append("socketId", socketId);
-
-  try {
-
-    const response = await fetch("/analyze", {
-      method: "POST",
-      body: formData
-    });
-
-    const data = await response.json();
-
-    displayResults(data.results);
-
-  } catch (err) {
-
-    console.error("Request failed", err);
-
-  }
-
-});
-
-/*
-====================================================
-DISPLAY RESULTS
-====================================================
-*/
-
-function displayResults(results) {
-
-  const resultsDiv = document.getElementById("results");
-
-  results.forEach(result => {
-
-    const card = document.createElement("div");
-    card.className = "result-card";
-
-    let html = `
-      <h3>📷 ${result.image}</h3>
-    `;
-
-    if (!result.matches || result.matches.length === 0) {
-
-      html += `<p class="no-match">
-        ❌ No matches found (≥60%)
-      </p>`;
-
-    } else {
-
-      result.matches.forEach(product => {
-
-        html += `
-          <div class="product">
-            <p>🔥 Similarity: ${product.similarity}%</p>
-            <a href="${product.url}" target="_blank">
-              🔗 Open Product
-            </a>
-          </div>
-        `;
-      });
-
-    }
-
-    card.innerHTML = html;
-    resultsDiv.appendChild(card);
-
-  });
+function scoreColor(score){
+  if(score > 70) return "score-green";
+  if(score > 40) return "score-orange";
+  return "score-red";
 }
 
+async function start(){
+  document.getElementById("spinner").style.display="block";
+  document.getElementById("bar").style.width="20%";
+
+  const form = new FormData();
+  form.append("image", document.getElementById("image").files[0]);
+  form.append("imgbb", document.getElementById("imgbb").value);
+  form.append("serpapi", document.getElementById("serpapi").value);
+  form.append("openai", document.getElementById("openai").value);
+  form.append("socketId", socketId);
+
+  const res = await fetch("/analyze", { method:"POST", body:form });
+  const data = await res.json();
+
+  document.getElementById("bar").style.width="100%";
+  document.getElementById("spinner").style.display="none";
+
+  displayResults(data);
+}
+
+function displayResults(data){
+  const container = document.getElementById("results");
+  container.innerHTML = "";
+
+  data.products.forEach((p,i)=>{
+    const score = data.scores[i]?.score || 0;
+    container.innerHTML += `
+      <div class="product">
+        <img src="${p.thumbnail}" width="80"><br>
+        <b>${p.title}</b><br>
+        <span class="${scoreColor(score)}">Score: ${score}</span><br>
+        <a href="${p.link}" target="_blank">View Product</a>
+      </div>
+    `;
+  });
+}
 </script>
 
 </body>
