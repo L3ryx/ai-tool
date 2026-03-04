@@ -1,186 +1,202 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
-<meta charset="UTF-8">
-<title>AI Pipeline Pro</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AliExpress Image Finder Pro</title>
 
-<style>
+<link rel="stylesheet" href="style.css" />
 
-body {
-    margin: 0;
-    background: #000;
-    color: white;
-    font-family: Arial, sans-serif;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-    text-align: center;
-}
+<!-- Socket.IO -->
+<script src="/socket.io/socket.io.js"></script>
 
-/* ================= CONTAINER ================= */
-
-.container {
-    width: 420px;
-}
-
-/* ================= INPUTS ================= */
-
-input {
-    width: 100%;
-    padding: 12px;
-    margin: 8px 0;
-    border-radius: 8px;
-    border: none;
-}
-
-/* ================= BUTTON PRO ================= */
-
-button {
-    width: 100%;
-    padding: 16px;
-    border-radius: 12px;
-    border: none;
-    background: #00ff88;
-    color: black;
-    font-weight: bold;
-    font-size: 18px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 0 10px #00ff88;
-}
-
-button:hover {
-    transform: scale(1.05);
-}
-
-button.loading {
-    background: #ffaa00;
-    box-shadow: 0 0 25px #ffaa00;
-}
-
-/* ================= PROGRESS BAR ================= */
-
-.progress-container {
-    width: 100%;
-    background: #111;
-    border-radius: 20px;
-    margin-top: 20px;
-    height: 22px;
-    overflow: hidden;
-}
-
-.progress-bar {
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(90deg, #00ff88, #00ccff);
-    border-radius: 20px;
-    transition: width 0.6s ease;
-}
-
-/* ================= LOGS ================= */
-
-#logs {
-    margin-top: 20px;
-    font-size: 13px;
-    max-height: 150px;
-    overflow-y: auto;
-    background: #111;
-    padding: 10px;
-    border-radius: 10px;
-}
-
-</style>
 </head>
 <body>
 
 <div class="container">
 
-<h2>🚀 AI Product Analyzer</h2>
+<h1>🖼 AliExpress Image Finder</h1>
 
-<p>IMGBB</p>
-<input type="text" id="imgbb">
+<!-- ========================================= -->
+<!-- UPLOAD FORM -->
+<!-- ========================================= -->
 
-<p>SerpAPI</p>
-<input type="text" id="serpapi">
+<div class="card">
 
-<p>OpenAI</p>
-<input type="text" id="openai">
+<h2>📤 Upload Image(s)</h2>
 
-<input type="file" id="image">
+<form id="uploadForm">
 
-<button id="startBtn" onclick="startPipeline()">START</button>
+<input type="file"
+       name="images"
+       multiple
+       accept="image/*" />
 
-<div class="progress-container">
-<div class="progress-bar" id="progress"></div>
+<button type="submit">
+🚀 Analyze
+</button>
+
+</form>
+
 </div>
 
-<div id="logs"></div>
+<!-- ========================================= -->
+<!-- LIVE LOGS -->
+<!-- ========================================= -->
+
+<div class="card">
+
+<h2>📊 Live Logs</h2>
+
+<div id="logs" class="log-box">
+<p>Waiting for analysis...</p>
+</div>
 
 </div>
+
+<!-- ========================================= -->
+<!-- RESULTS -->
+<!-- ========================================= -->
+
+<div class="card">
+
+<h2>🎯 Results</h2>
+
+<div id="results"></div>
+
+</div>
+
+</div>
+
+<!-- ========================================= -->
+<!-- SCRIPT -->
+<!-- ========================================= -->
 
 <script>
 
-/* ================= START PIPELINE ================= */
+const socket = io();
+let socketId = null;
 
-async function startPipeline() {
+/*
+====================================================
+SOCKET CONNECTION
+====================================================
+*/
 
-    const btn = document.getElementById("startBtn");
-    const progress = document.getElementById("progress");
+socket.on("connected", (data) => {
+  socketId = data.socketId;
+  console.log("Socket connected:", socketId);
+});
 
-    btn.classList.add("loading");
-    btn.innerText = "LOADING...";
-    progress.style.width = "5%";
+/*
+====================================================
+LIVE LOGS
+====================================================
+*/
 
-    const file = document.getElementById("image").files[0];
+socket.on("log", (data) => {
 
-    const formData = new FormData();
-    formData.append("image", file);
-    formData.append("imgbb", document.getElementById("imgbb").value);
-    formData.append("serpapi", document.getElementById("serpapi").value);
-    formData.append("openai", document.getElementById("openai").value);
+  const logsDiv = document.getElementById("logs");
 
-    progress.style.width = "20%"; // Upload
+  const line = document.createElement("p");
 
-    const res = await fetch("/analyze", {
-        method: "POST",
-        body: formData
+  line.innerHTML = `
+    <span style="color:#888">
+      [${new Date(data.time).toLocaleTimeString()}]
+    </span>
+    ${data.message}
+  `;
+
+  logsDiv.appendChild(line);
+  logsDiv.scrollTop = logsDiv.scrollHeight;
+
+});
+
+/*
+====================================================
+FORM SUBMIT
+====================================================
+*/
+
+const form = document.getElementById("uploadForm");
+const resultsDiv = document.getElementById("results");
+
+form.addEventListener("submit", async (e) => {
+
+  e.preventDefault();
+
+  resultsDiv.innerHTML = "";
+  document.getElementById("logs").innerHTML =
+    "<p>🚀 Starting analysis...</p>";
+
+  const formData = new FormData(form);
+  formData.append("socketId", socketId);
+
+  try {
+
+    const response = await fetch("/analyze", {
+      method: "POST",
+      body: formData
     });
 
-    progress.style.width = "80%"; // Processing
+    const data = await response.json();
 
-    const data = await res.json();
+    displayResults(data.results);
 
-    progress.style.width = "100%"; // Done
+  } catch (err) {
 
-    document.getElementById("logs").innerText =
-        JSON.stringify(data, null, 2);
+    console.error("Request failed", err);
 
-    btn.innerText = "DONE ✅";
-    btn.classList.remove("loading");
+  }
 
-    loadLogs();
-}
+});
 
-/* ================= LIVE LOGS ================= */
+/*
+====================================================
+DISPLAY RESULTS
+====================================================
+*/
 
-async function loadLogs() {
+function displayResults(results) {
 
-    const res = await fetch("/logs");
-    const logs = await res.json();
+  const resultsDiv = document.getElementById("results");
 
-    const progress = document.getElementById("progress");
+  results.forEach(result => {
 
-    if (logs.length > 0) {
-        let percent = Math.min(logs.length * 20, 100);
-        progress.style.width = percent + "%";
+    const card = document.createElement("div");
+    card.className = "result-card";
+
+    let html = `
+      <h3>📷 ${result.image}</h3>
+    `;
+
+    if (!result.matches || result.matches.length === 0) {
+
+      html += `<p class="no-match">
+        ❌ No matches found (≥60%)
+      </p>`;
+
+    } else {
+
+      result.matches.forEach(product => {
+
+        html += `
+          <div class="product">
+            <p>🔥 Similarity: ${product.similarity}%</p>
+            <a href="${product.url}" target="_blank">
+              🔗 Open Product
+            </a>
+          </div>
+        `;
+      });
+
     }
 
-    document.getElementById("logs").innerText =
-        JSON.stringify(logs.slice(-5), null, 2);
-}
+    card.innerHTML = html;
+    resultsDiv.appendChild(card);
 
-setInterval(loadLogs, 3000);
+  });
+}
 
 </script>
 
