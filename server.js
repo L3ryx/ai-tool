@@ -1,6 +1,6 @@
-// ===============================
-// IMAGE → SERPAPI → FILTER → OPENAI
-// ===============================
+// ============================================
+// IMAGE → SERPAPI → FILTER → AI COMPARE → LOGS
+// ============================================
 
 const express = require("express");
 const multer = require("multer");
@@ -18,9 +18,9 @@ const upload = multer({
   storage: multer.memoryStorage()
 });
 
-/* ===============================
+/* ============================================
    PIPELINE
-=============================== */
+============================================ */
 
 app.post("/analyze", upload.single("image"), async (req, res) => {
 
@@ -32,11 +32,11 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
       return res.json({ error: "Image missing" });
 
     if (!serpapi || !openai)
-      return res.json({ error: "Missing API keys" });
+      return res.json({ error: "API keys missing" });
 
-    // ===================================
-    // 1️⃣ SERPAPI SEARCH (Google Shopping)
-    // ===================================
+    // --------------------------------------
+    // 1️⃣ SERPAPI SEARCH
+    // --------------------------------------
 
     const serp = await axios.get("https://serpapi.com/search", {
       params: {
@@ -48,17 +48,17 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     const products = serp.data.shopping_results || [];
 
-    // ===================================
+    // --------------------------------------
     // 2️⃣ FILTER ALIEXPRESS
-    // ===================================
+    // --------------------------------------
 
     const aliProducts = products.filter(p =>
       p.link && p.link.includes("aliexpress")
     );
 
-    // ===================================
+    // --------------------------------------
     // 3️⃣ OPENAI PRODUCT COMPARISON
-    // ===================================
+    // --------------------------------------
 
     let comparison = null;
 
@@ -72,11 +72,11 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
             {
               role: "user",
               content: `
-Compare these AliExpress products:
+Compare these products:
 
-${JSON.stringify(aliProducts.slice(0, 5), null, 2)}
+${JSON.stringify(aliProducts.slice(0,5), null, 2)}
 
-Return best product and why.
+Return best product + why.
 `
             }
           ]
@@ -92,9 +92,9 @@ Return best product and why.
       comparison = ai.data.choices[0].message.content;
     }
 
-    // ===================================
+    // --------------------------------------
     // 4️⃣ LOGS
-    // ===================================
+    // --------------------------------------
 
     const log = {
       time: new Date(),
@@ -102,6 +102,10 @@ Return best product and why.
     };
 
     fs.appendFileSync("logs.json", JSON.stringify(log) + "\n");
+
+    // --------------------------------------
+    // RESPONSE
+    // --------------------------------------
 
     res.json({
       products: aliProducts,
@@ -121,9 +125,9 @@ Return best product and why.
 
 });
 
-/* ===============================
+/* ============================================
    LIVE LOGS
-=============================== */
+============================================ */
 
 app.get("/logs", (req, res) => {
 
@@ -132,12 +136,4 @@ app.get("/logs", (req, res) => {
 
   const logs = fs.readFileSync("logs.json", "utf8")
     .split("\n")
-    .filter(Boolean)
-    .map(line => JSON.parse(line));
-
-  res.json(logs);
-});
-
-app.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
-});
+    .filter
