@@ -2,13 +2,83 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>AI Tool</title>
+<title>AI Pipeline</title>
+
+<style>
+
+body {
+    margin: 0;
+    background: #000;
+    color: white;
+    font-family: Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    text-align: center;
+}
+
+.container {
+    width: 400px;
+}
+
+input {
+    width: 100%;
+    padding: 10px;
+    margin: 8px 0;
+    border-radius: 6px;
+    border: none;
+}
+
+button {
+    width: 100%;
+    padding: 15px;
+    border-radius: 10px;
+    border: none;
+    background: #00ff88;
+    color: black;
+    font-weight: bold;
+    font-size: 18px;
+    cursor: pointer;
+}
+
+button:hover {
+    opacity: 0.8;
+}
+
+.progress-container {
+    width: 100%;
+    background: #222;
+    border-radius: 20px;
+    margin-top: 20px;
+    height: 20px;
+}
+
+.progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #00ff88;
+    border-radius: 20px;
+    transition: width 0.5s;
+}
+
+#logs {
+    margin-top: 20px;
+    font-size: 14px;
+    max-height: 150px;
+    overflow: auto;
+}
+
+</style>
 </head>
 <body>
 
-<h1>Upload Image</h1>
+<div class="container">
 
-<input type="file" id="image">
+<h2>AI Product Analyzer</h2>
+
+<p>IMGBB Key</p>
+<input type="text" id="imgbb">
 
 <p>SerpAPI Key</p>
 <input type="text" id="serpapi">
@@ -16,50 +86,66 @@
 <p>OpenAI Key</p>
 <input type="text" id="openai">
 
-<br><br>
+<input type="file" id="image">
 
-<button onclick="analyze()">Start</button>
+<button onclick="startPipeline()">START</button>
 
-<h2>Results</h2>
-<pre id="result"></pre>
+<div class="progress-container">
+<div class="progress-bar" id="progress"></div>
+</div>
 
-<h2>Logs</h2>
-<pre id="logs"></pre>
+<div id="logs"></div>
+
+</div>
 
 <script>
 
-async function analyze() {
+async function startPipeline() {
 
-  const file = document.getElementById("image").files[0];
+    const file = document.getElementById("image").files[0];
 
-  const formData = new FormData();
-  formData.append("image", file);
-  formData.append("serpapi", document.getElementById("serpapi").value);
-  formData.append("openai", document.getElementById("openai").value);
+    const formData = new FormData();
+    formData.append("image", file);
+    formData.append("imgbb", document.getElementById("imgbb").value);
+    formData.append("serpapi", document.getElementById("serpapi").value);
+    formData.append("openai", document.getElementById("openai").value);
 
-  const res = await fetch("/analyze", {
-    method: "POST",
-    body: formData
-  });
+    // Reset progress
+    document.getElementById("progress").style.width = "10%";
 
-  const data = await res.json();
+    const res = await fetch("/analyze", {
+        method: "POST",
+        body: formData
+    });
 
-  document.getElementById("result").innerText =
-    JSON.stringify(data, null, 2);
+    const data = await res.json();
 
-  loadLogs();
+    document.getElementById("progress").style.width = "100%";
+
+    document.getElementById("logs").innerText =
+        JSON.stringify(data, null, 2);
+
+    loadLogs();
 }
 
 async function loadLogs() {
 
-  const res = await fetch("/logs");
-  const logs = await res.json();
+    const res = await fetch("/logs");
+    const logs = await res.json();
 
-  document.getElementById("logs").innerText =
-    JSON.stringify(logs, null, 2);
+    const progress = document.getElementById("progress");
+
+    // Synchronise barre avec nombre de logs
+    if (logs.length > 0) {
+        let percent = Math.min(logs.length * 20, 100);
+        progress.style.width = percent + "%";
+    }
+
+    document.getElementById("logs").innerText =
+        JSON.stringify(logs.slice(-5), null, 2);
 }
 
-setInterval(loadLogs, 5000);
+setInterval(loadLogs, 3000);
 
 </script>
 
