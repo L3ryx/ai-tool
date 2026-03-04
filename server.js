@@ -1,7 +1,7 @@
+require("dotenv").config();
 const express = require("express");
 const multer = require("multer");
 const axios = require("axios");
-const FormData = require("form-data");
 const http = require("http");
 const { Server } = require("socket.io");
 
@@ -9,137 +9,236 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const PORT = process.env.PORT || 3000;
+const upload = multer({
+  storage: multer.memoryStorage()
+});
 
-app.use(express.static("public"));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static("public"));
 
-const upload = multer({ storage: multer.memoryStorage() });
+/*
+====================================================
+LOG SYSTEM
+====================================================
+*/
 
-function log(socket,msg){
-  if(socket) socket.emit("log",msg);
+function sendLog(socket, message, type = "info") {
+
+  console.log(`[${type}] ${message}`);
+
+  if (socket) {
+    socket.emit("log", {
+      message,
+      type,
+      time: new Date().toISOString()
+    });
+  }
 }
 
-app.post("/analyze", upload.single("image"), async (req,res)=>{
+/*
+====================================================
+UPLOAD IMAGE TO IMGBB
+====================================================
+*/
 
-  const socket = io.sockets.sockets.get(req.body.socketId);
+async function uploadToImgBB(buffer) {
 
-  try{
+  const base64 = buffer.toString("base64");
 
-    const { imgbb, serpapi, openai } = req.body;
+  const response = await axios.post(
+    "https://api.imgbb.com/1/upload",
+    new URLSearchParams({
+      key: process.env.IMGBB_KEY,
+      image: base64
+    }),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    }
+  );
 
-    if(!req.file)
-      return res.status(400).json({ error:"No image uploaded" });
+  return response.data.data.url;
+}
 
-    /* ================= 1️⃣ Upload Image To ImgBB ================= */
+/*
+====================================================
+OPENAI VISION COMPARISON
+====================================================
+*/
 
-    log(socket,"📤 Uploading image...");
+async function compareImages(imageA, imageB) {
 
-    const form = new FormData();
-    form.append("image", req.file.buffer.toString("base64"));
+  const response = await axios.post(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Compare these two product images and return ONLY a similarity score between 0 and 100."
+            },
+            {
+              type: "image_url",
+              image_url: { url: imageA }
+            },
+            {
+              type: "image_url",
+              image_url: { url: imageB }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      }
+    }
+  );
 
-    const uploadRes = await axios.post(
-      `https://api.imgbb.com/1/upload?key=${imgbb}`,
-      form,
-      { headers: form.getHeaders() }
-    );
+  const text = response.data.choices[0].message.content;
+  const score = parseInt(text.match(/\d+/)?.[0] || "0");
 
-    const imageUrl = uploadRes.data.data.url;
+  return score;
+}
 
-    /* ================= 2️⃣ Google Image Reverse Search ================= */
+/*
+====================================================
+ANALYZE ROUTE
+====================================================
+*/
 
-    log(socket,"🔎 Searching on Google Images...");
+app.post("/analyze", upload.single("image"), async (req, res) => {
 
-    const search = await axios.get("https://serpapi.com/search",{
-      params:{
-        engine:"google_reverse_image",
-        image_url:imageUrl,
-        api_key:serpapi
+  const socketId = req.body.socketId;
+  const socket = io.sockets.sockets.get(socketId);
+
+  if (!req.file) {
+    return res.status(400).json({ error: "No image uploaded" });
+  }
+
+  try {
+
+    /*
+    ============================================
+    STEP 1 — Upload To ImgBB
+    ============================================
+    */
+
+    sendLog(socket, "📤 Uploading image to ImgBB...");
+
+    const publicImageUrl = await uploadToImgBB(req.file.buffer);
+
+    sendLog(socket, "✅ Image uploaded");
+
+    /*
+    ============================================
+    STEP 2 — Google Reverse Image
+    ============================================
+    */
+
+    sendLog(socket, "🔎 Searching with Google Reverse Image...");
+
+    const serp = await axios.get("https://serpapi.com/search", {
+      params: {
+        engine: "google_reverse_image",
+        image_url: publicImageUrl,
+        api_key: process.env.SERPAPI_KEY
       }
     });
 
-    const results = search.data.image_results || [];
+    const results = serp.data?.image_results || [];
 
-    // 🔥 Prendre les 10 premières images
-    const topImages = results.slice(0,10);
+    sendLog(socket, `📦 ${results.length} results found`);
 
-    log(socket,"🖼 Top images found: " + topImages.length);
+    /*
+    ============================================
+    STEP 3 — Filter AliExpress + Take Top 10
+    ============================================
+    */
 
-    /* ================= 3️⃣ Compare With OpenAI Vision ================= */
+    const aliexpressLinks = results
+      .filter(r => r.link?.includes("aliexpress.com"))
+      .slice(0, 10);
 
-    let finalResults = [];
+    sendLog(socket, `🛍 AliExpress products: ${aliexpressLinks.length}`);
 
-    for(let img of topImages){
+    /*
+    ============================================
+    STEP 4 — Compare Each Product With OpenAI
+    ============================================
+    */
 
-      if(!img.thumbnail) continue;
+    const comparisons = await Promise.all(
 
-      log(socket,"🤖 Comparing image...");
+      aliexpressLinks.map(async (item) => {
 
-      try{
+        if (!item.thumbnail) return null;
 
-        const ai = await axios.post(
-          "https://api.openai.com/v1/chat/completions",
-          {
-            model:"gpt-4o",
-            messages:[{
-              role:"user",
-              content:[
-                {
-                  type:"text",
-                  text:"Compare these images and return ONLY similarity score 0-100"
-                },
-                {
-                  type:"image_url",
-                  image_url:{ url:imageUrl }
-                },
-                {
-                  type:"image_url",
-                  image_url:{ url:img.thumbnail }
-                }
-              ]
-            }]
-          },
-          {
-            headers:{
-              Authorization:`Bearer ${openai}`
-            }
-          }
-        );
+        try {
 
-        const score =
-          parseInt(ai.data.choices[0].message.content) || 0;
+          sendLog(socket, `🤖 Comparing ${item.title || "Product"}...`);
 
-        // 🔥 Garder seulement les images similaires
-        if(score >= 70){
+          const score = await compareImages(
+            publicImageUrl,
+            item.thumbnail
+          );
 
-          finalResults.push({
-            image: img.thumbnail,
-            link: img.link,
-            title: img.title || "Image Match",
-            score
-          });
+          return {
+            url: item.link,
+            image: item.thumbnail,
+            title: item.title,
+            similarity: score
+          };
 
+        } catch (err) {
+
+          sendLog(socket, "❌ AI comparison failed", "error");
+
+          return null;
         }
 
-      }catch(err){
-        log(socket,"❌ AI comparison failed for one image");
-      }
-    }
+      })
 
-    log(socket,"🎯 Similar images found: " + finalResults.length);
+    );
+
+    /*
+    ============================================
+    STEP 5 — Filter Score ≥ 70 + Sort
+    ============================================
+    */
+
+    const finalResults = comparisons
+      .filter(Boolean)
+      .filter(p => p.similarity >= 70)
+      .sort((a, b) => b.similarity - a.similarity);
+
+    sendLog(socket, `🎯 Final Matches: ${finalResults.length}`);
+
+    /*
+    ============================================
+    STEP 6 — Return Results
+    ============================================
+    */
 
     res.json({
+      image: publicImageUrl,
       results: finalResults
     });
 
-  }catch(err){
+  } catch (err) {
 
     console.error(err);
 
-    log(socket,"🔥 PIPELINE FAILED");
+    sendLog(socket, "🔥 PIPELINE FAILED", "error");
 
     res.status(500).json({
-      error:"Pipeline failed",
+      error: "Pipeline failed",
       detail: err.message
     });
 
@@ -147,6 +246,28 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
 
 });
 
-server.listen(PORT,()=>{
-  console.log("Server running on port",PORT);
+/*
+====================================================
+SOCKET
+====================================================
+*/
+
+io.on("connection", (socket) => {
+
+  socket.emit("connected", {
+    socketId: socket.id
+  });
+
+  console.log("🟢 Client connected");
+
+});
+
+/*
+====================================================
+START SERVER
+====================================================
+*/
+
+server.listen(process.env.PORT || 3000, () => {
+  console.log("🚀 Server running");
 });
