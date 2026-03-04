@@ -8,7 +8,7 @@
 
 <h1>Upload Image</h1>
 
-<input type="file" id="file">
+<input type="file" id="image">
 
 <p>SerpAPI Key</p>
 <input type="text" id="serpapi">
@@ -30,7 +30,7 @@
 
 async function analyze() {
 
-  const file = document.getElementById("file").files[0];
+  const file = document.getElementById("image").files[0];
 
   const formData = new FormData();
   formData.append("image", file);
