@@ -24,7 +24,6 @@ LOG SYSTEM
 */
 
 function sendLog(socket, message, type = "info") {
-
   console.log(`[${type}] ${message}`);
 
   if (socket) {
@@ -126,7 +125,7 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     /*
     ============================================
-    STEP 1 — Upload To ImgBB
+    STEP 1 — Upload Image
     ============================================
     */
 
@@ -135,30 +134,33 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
     const publicImageUrl = await uploadToImgBB(req.file.buffer);
 
     sendLog(socket, "✅ Image uploaded");
+    sendLog(socket, `🔗 Image URL: ${publicImageUrl}`);
 
     /*
     ============================================
-    STEP 2 — Google Reverse Image
+    STEP 2 — Google Lens Search (STABLE)
     ============================================
     */
 
-    sendLog(socket, "🔎 Searching with Google Reverse Image...");
+    sendLog(socket, "🔎 Searching with Google Lens...");
 
     const serp = await axios.get("https://serpapi.com/search", {
       params: {
-        engine: "google_reverse_image",
+        engine: "google_lens",
         image_url: publicImageUrl,
         api_key: process.env.SERPAPI_KEY
       }
     });
 
-    const results = serp.data?.image_results || [];
+    console.log("SERP FULL RESPONSE:", JSON.stringify(serp.data, null, 2));
 
-    sendLog(socket, `📦 ${results.length} results found`);
+    const results = serp.data?.visual_matches || [];
+
+    sendLog(socket, `📦 ${results.length} visual matches found`);
 
     /*
     ============================================
-    STEP 3 — Filter AliExpress + Take Top 10
+    STEP 3 — Take Top 10 AliExpress Links
     ============================================
     */
 
@@ -170,7 +172,7 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     /*
     ============================================
-    STEP 4 — Compare Each Product With OpenAI
+    STEP 4 — Parallel AI Comparison
     ============================================
     */
 
@@ -209,7 +211,7 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     /*
     ============================================
-    STEP 5 — Filter Score ≥ 70 + Sort
+    STEP 5 — Filter Score ≥ 70
     ============================================
     */
 
@@ -241,7 +243,6 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
       error: "Pipeline failed",
       detail: err.message
     });
-
   }
 
 });
