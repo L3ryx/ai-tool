@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>AI Tool</title>
+</head>
+<body>
+
+<h1>Upload Image</h1>
+
+<input type="file" id="file">
+
+<p>SerpAPI Key</p>
+<input type="text" id="serpapi">
+
+<p>OpenAI Key</p>
+<input type="text" id="openai">
+
+<br><br>
+
+<button onclick="analyze()">Start</button>
+
+<h2>Results</h2>
+<pre id="result"></pre>
+
+<h2>Logs</h2>
+<pre id="logs"></pre>
+
+<script>
+
+async function analyze() {
+
+  const file = document.getElementById("file").files[0];
+
+  const formData = new FormData();
+  formData.append("image", file);
+  formData.append("serpapi", document.getElementById("serpapi").value);
+  formData.append("openai", document.getElementById("openai").value);
+
+  const res = await fetch("/analyze", {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await res.json();
+
+  document.getElementById("result").innerText =
+    JSON.stringify(data, null, 2);
+
+  loadLogs();
+}
+
+async function loadLogs() {
+
+  const res = await fetch("/logs");
+  const logs = await res.json();
+
+  document.getElementById("logs").innerText =
+    JSON.stringify(logs, null, 2);
+}
+
+setInterval(loadLogs, 5000);
+
+</script>
+
+</body>
+</html>
