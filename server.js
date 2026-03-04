@@ -4,7 +4,6 @@ const multer = require("multer");
 const axios = require("axios");
 const http = require("http");
 const { Server } = require("socket.io");
-const cheerio = require("cheerio");
 const { searchWithImage } = require("./serp");
 
 const app = express();
