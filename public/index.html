@@ -2,9 +2,10 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>AI AliExpress Finder</title>
+<title>AI Reverse AliExpress Finder</title>
 <script src="/socket.io/socket.io.js"></script>
 <style>
+
 body {
   margin:0;
   background:#000;
@@ -15,7 +16,16 @@ body {
   align-items:center;
   height:100vh;
 }
+
 .container { width:500px; text-align:center; }
+
+input {
+  width:100%;
+  padding:10px;
+  margin:6px 0;
+  border-radius:8px;
+  border:none;
+}
 
 button {
   background:#00ff88;
@@ -27,7 +37,6 @@ button {
   border-radius:10px;
   cursor:pointer;
 }
-button:hover { opacity:0.8; }
 
 .progress {
   width:100%;
@@ -35,6 +44,7 @@ button:hover { opacity:0.8; }
   border-radius:20px;
   margin-top:15px;
 }
+
 .bar {
   height:20px;
   width:0%;
@@ -43,18 +53,16 @@ button:hover { opacity:0.8; }
   transition:0.4s;
 }
 
-.spinner {
-  display:none;
-  margin-top:10px;
-}
+.spinner { display:none; margin-top:10px; }
 
 .logs {
-  margin-top:15px;
+  margin-top:10px;
   max-height:120px;
   overflow:auto;
   background:#111;
   padding:10px;
   border-radius:10px;
+  font-size:13px;
 }
 
 .product {
@@ -74,7 +82,7 @@ button:hover { opacity:0.8; }
 
 <div class="container">
 
-<h2>🔥 AI AliExpress Finder</h2>
+<h2>🔥 AI Reverse AliExpress Finder</h2>
 
 <input type="text" id="imgbb" placeholder="IMGBB KEY">
 <input type="text" id="serpapi" placeholder="SERPAPI KEY">
@@ -92,12 +100,11 @@ button:hover { opacity:0.8; }
 </div>
 
 <script>
+
 const socket = io();
 let socketId;
 
-socket.on("connect", () => {
-  socketId = socket.id;
-});
+socket.on("connect", ()=> socketId = socket.id);
 
 socket.on("log", msg => {
   document.getElementById("logs").innerHTML += msg + "<br>";
@@ -105,14 +112,16 @@ socket.on("log", msg => {
 });
 
 function scoreColor(score){
-  if(score > 70) return "score-green";
-  if(score > 40) return "score-orange";
+  if(score >= 75) return "score-green";
+  if(score >= 40) return "score-orange";
   return "score-red";
 }
 
 async function start(){
   document.getElementById("spinner").style.display="block";
-  document.getElementById("bar").style.width="20%";
+  document.getElementById("bar").style.width="30%";
+  document.getElementById("results").innerHTML="";
+  document.getElementById("logs").innerHTML="";
 
   const form = new FormData();
   form.append("image", document.getElementById("image").files[0]);
@@ -127,25 +136,29 @@ async function start(){
   document.getElementById("bar").style.width="100%";
   document.getElementById("spinner").style.display="none";
 
-  displayResults(data);
+  displayResults(data.results);
 }
 
-function displayResults(data){
+function displayResults(results){
   const container = document.getElementById("results");
-  container.innerHTML = "";
 
-  data.products.forEach((p,i)=>{
-    const score = data.scores[i]?.score || 0;
+  if(!results || results.length===0){
+    container.innerHTML = "<p>No AliExpress matches found.</p>";
+    return;
+  }
+
+  results.forEach(p=>{
     container.innerHTML += `
       <div class="product">
         <img src="${p.thumbnail}" width="80"><br>
         <b>${p.title}</b><br>
-        <span class="${scoreColor(score)}">Score: ${score}</span><br>
+        <span class="${scoreColor(p.score)}">Score: ${p.score}</span><br>
         <a href="${p.link}" target="_blank">View Product</a>
       </div>
     `;
   });
 }
+
 </script>
 
 </body>
