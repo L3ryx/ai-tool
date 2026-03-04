@@ -4,7 +4,6 @@ const axios = require("axios");
 const FormData = require("form-data");
 const http = require("http");
 const { Server } = require("socket.io");
-const cheerio = require("cheerio");
 
 const app = express();
 const server = http.createServer(app);
@@ -17,8 +16,8 @@ app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-function logStep(socket, msg){
-  if(socket) socket.emit("log", msg);
+function logStep(socket,msg){
+  if(socket) socket.emit("log",msg);
 }
 
 app.post("/analyze", upload.single("image"), async (req,res)=>{
@@ -32,7 +31,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
     if(!req.file)
       return res.status(400).json({ error:"No image uploaded" });
 
-    /* ================= 1️⃣ Upload Image to ImgBB ================= */
+    /* ================= 1️⃣ Upload Image To ImgBB ================= */
 
     logStep(socket,"📤 Uploading image to ImgBB...");
 
@@ -47,69 +46,33 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
 
     const imageUrl = imgRes.data.data.url;
 
-    /* ================= 2️⃣ Google Reverse Image ================= */
+    /* ================= 2️⃣ Search Image Directly On AliExpress ================= */
 
-    logStep(socket,"🔎 Reverse searching image...");
+    logStep(socket,"🔎 Searching image on AliExpress...");
 
-    const serp = await axios.get("https://serpapi.com/search",{
+    const search = await axios.get("https://serpapi.com/search",{
       params:{
-        engine:"google_reverse_image",
-        image_url:imageUrl,
+        engine:"aliexpress_search",
+        q:imageUrl,
         api_key:serpapi
       }
     });
 
-    const imageResults = serp.data.image_results || [];
+    const products = search.data.products || [];
 
-    const aliPages = imageResults.filter(r =>
-      r.link && r.link.includes("aliexpress")
-    );
+    logStep(socket,"🛍 Products found: " + products.length);
 
-    logStep(socket,`🛒 AliExpress pages: ${aliPages.length}`);
+    const topProducts = products.slice(0,10);
 
-    /* ================= 3️⃣ Extract Images From Pages ================= */
-
-    let allProductImages = [];
-
-    for(let page of aliPages.slice(0,5)){
-
-      try{
-
-        logStep(socket,"📥 Extracting images from page...");
-
-        const html = await axios.get(page.link,{
-          headers:{ "User-Agent":"Mozilla/5.0" }
-        });
-
-        const $ = cheerio.load(html.data);
-
-        $("img").each((i,el)=>{
-          const src = $(el).attr("src");
-
-          if(src && src.includes("alicdn")){
-            allProductImages.push({
-              page: page.link,
-              image: src
-            });
-          }
-        });
-
-      }catch(err){
-        logStep(socket,"⚠️ Failed extracting images from page");
-      }
-    }
-
-    logStep(socket,`📦 Images extracted: ${allProductImages.length}`);
-
-    /* ================= 4️⃣ Compare Top 10 Images ================= */
-
-    const imagesToCompare = allProductImages.slice(0,10);
-
-    logStep(socket,`🤖 Comparing ${imagesToCompare.length} images...`);
+    /* ================= 3️⃣ Compare Top 10 Products ================= */
 
     let scoredResults = [];
 
-    for(let img of imagesToCompare){
+    for(let product of topProducts){
+
+      if(!product.image) continue;
+
+      logStep(socket,"🤖 Comparing product: " + product.title);
 
       try{
 
@@ -122,7 +85,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
               content:[
                 {
                   type:"text",
-                  text:"Compare these images and return ONLY a similarity score between 0 and 100."
+                  text:"Compare these images and return ONLY similarity score 0-100"
                 },
                 {
                   type:"image_url",
@@ -130,7 +93,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
                 },
                 {
                   type:"image_url",
-                  image_url:{ url:img.image }
+                  image_url:{ url:product.image }
                 }
               ]
             }]
@@ -146,17 +109,19 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
           parseInt(ai.data.choices[0].message.content) || 0;
 
         scoredResults.push({
-          page: img.page,
-          image: img.image,
+          title: product.title,
+          image: product.image,
+          link: product.link,
+          price: product.price,
           score
         });
 
       }catch(err){
-        logStep(socket,"❌ AI comparison failed for one image");
+        logStep(socket,"❌ AI comparison failed");
       }
     }
 
-    /* ================= 5️⃣ Filter 70–80 ================= */
+    /* ================= 4️⃣ Filter 70–80 ================= */
 
     scoredResults.sort((a,b)=> b.score - a.score);
 
@@ -164,13 +129,15 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
       p.score >= 70 && p.score <= 80
     );
 
-    logStep(socket,`🎯 Results kept (70-80%): ${filtered.length}`);
+    logStep(socket,"🎯 Results kept (70-80%): " + filtered.length);
 
     res.json({
       results: filtered
     });
 
   }catch(err){
+
+    console.error(err);
 
     logStep(socket,"🔥 PIPELINE FAILED");
 
