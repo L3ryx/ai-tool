@@ -127,9 +127,9 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
   try {
 
     /*
-    ============================================
+    ====================================================
     STEP 1 — Upload Image
-    ============================================
+    ====================================================
     */
 
     sendLog(socket, "📤 Uploading image to ImgBB...");
@@ -139,9 +139,9 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
     sendLog(socket, `✅ Image uploaded: ${publicImageUrl}`);
 
     /*
-    ============================================
-    STEP 2 — SERPAPI SEARCH (MODULE SEPARATE)
-    ============================================
+    ====================================================
+    STEP 2 — SERPAPI SEARCH
+    ====================================================
     */
 
     const results = await searchWithImage({
@@ -150,22 +150,36 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
       socket
     });
 
+    sendLog(socket, `📦 ${results.length} results returned from SerpAPI`);
+
     /*
-    ============================================
-    STEP 3 — Filter AliExpress + Top 10
-    ============================================
+    ====================================================
+    STEP 3 — INTELLIGENT ALIEXPRESS FILTER
+    ====================================================
     */
 
-    const aliexpressLinks = results
-      .filter(r => r.link?.includes("aliexpress.com"))
-      .slice(0, 10);
+    const aliexpressLinks = results.filter(r => {
 
-    sendLog(socket, `🛍 AliExpress products: ${aliexpressLinks.length}`);
+      const url = r.link || "";
+      const title = r.title || "";
+      const snippet = r.snippet || "";
+
+      const combined = (url + title + snippet).toLowerCase();
+
+      return combined.includes("aliexpress");
+
+    }).slice(0, 10);
+
+    sendLog(socket, `🛍 AliExpress matches: ${aliexpressLinks.length}`);
+
+    if (aliexpressLinks.length === 0) {
+      sendLog(socket, "⚠ No AliExpress matches found", "error");
+    }
 
     /*
-    ============================================
-    STEP 4 — Parallel AI Comparison
-    ============================================
+    ====================================================
+    STEP 4 — PARALLEL AI COMPARISON
+    ====================================================
     */
 
     const comparisons = await Promise.all(
@@ -193,7 +207,6 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
         } catch (err) {
 
           sendLog(socket, "❌ AI comparison failed", "error");
-
           return null;
         }
 
@@ -202,9 +215,9 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
     );
 
     /*
-    ============================================
-    STEP 5 — Filter Score ≥ 70
-    ============================================
+    ====================================================
+    STEP 5 — FILTER SCORE ≥ 70
+    ====================================================
     */
 
     const finalResults = comparisons
@@ -212,12 +225,12 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
       .filter(p => p.similarity >= 70)
       .sort((a, b) => b.similarity - a.similarity);
 
-    sendLog(socket, `🎯 Final Matches: ${finalResults.length}`);
+    sendLog(socket, `🎯 Final results: ${finalResults.length}`);
 
     /*
-    ============================================
+    ====================================================
     STEP 6 — RETURN RESULTS
-    ============================================
+    ====================================================
     */
 
     res.json({
@@ -227,12 +240,15 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
   } catch (err) {
 
+    console.error(err);
+
     sendLog(socket, "🔥 PIPELINE FAILED", "error");
 
     res.status(500).json({
       error: "Pipeline failed",
       detail: err.message
     });
+
   }
 
 });
