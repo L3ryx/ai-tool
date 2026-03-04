@@ -20,26 +20,28 @@ app.use(express.static("public"));
 
 /*
 ====================================================
-LOG SYSTEM
+LOG SYSTEM (LIVE)
 ====================================================
 */
 
 function sendLog(socket, message, type = "info") {
 
+  const logData = {
+    message,
+    type,
+    time: new Date().toISOString()
+  };
+
   console.log(`[${type}] ${message}`);
 
   if (socket) {
-    socket.emit("log", {
-      message,
-      type,
-      time: new Date().toISOString()
-    });
+    socket.emit("log", logData);
   }
 }
 
 /*
 ====================================================
-UPLOAD TO IMGBB
+UPLOAD IMAGE TO IMGBB
 ====================================================
 */
 
@@ -96,6 +98,186 @@ async function compareImages(imageA, imageB) {
       ],
       max_tokens: 10
     },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      }
+    }
+  );
+
+  const text = response.data.choices[0].message.content;
+  const score = parseInt(text.match(/\d+/)?.[0] || "0");
+
+  return score;
+}
+
+/*
+====================================================
+ANALYZE ROUTE
+====================================================
+*/
+
+app.post("/analyze", upload.single("image"), async (req, res) => {
+
+  const socketId = req.body.socketId;
+  const socket = io.sockets.sockets.get(socketId);
+
+  if (!req.file) {
+    return res.status(400).json({ error: "No image uploaded" });
+  }
+
+  try {
+
+    sendLog(socket, "📤 Uploading image to ImgBB...");
+
+    const publicImageUrl = await uploadToImgBB(req.file.buffer);
+
+    sendLog(socket, "✅ Image uploaded");
+
+    /*
+    ====================================================
+    STEP 1 — SERPAPI SEARCH
+    ====================================================
+    */
+
+    sendLog(socket, "🔎 Searching products via SerpAPI...");
+
+    const serpResults = await searchWithImage({
+      imageUrl: publicImageUrl,
+      apiKey: process.env.SERPAPI_KEY,
+      socket
+    });
+
+    sendLog(socket, `📦 ${serpResults.length} results found`);
+
+    /*
+    ====================================================
+    STEP 2 — FILTER ALIEXPRESS
+    ====================================================
+    */
+
+    const aliexpressProducts = serpResults.filter(r => {
+
+      const combined = (
+        (r.link || "") +
+        (r.title || "") +
+        (r.snippet || "")
+      ).toLowerCase();
+
+      return combined.includes("aliexpress");
+
+    }).slice(0, 10);
+
+    sendLog(socket, `🛍 ${aliexpressProducts.length} AliExpress products`);
+
+    /*
+    ====================================================
+    STEP 3 — USE IMAGES FROM SERPAPI
+    ====================================================
+    */
+
+    const productImages = aliexpressProducts.map(product => {
+
+      return {
+        url: product.link,
+        title: product.title,
+        image: product.thumbnail || product.image || null
+      };
+
+    }).filter(p => p.image);
+
+    sendLog(socket, `🖼 ${productImages.length} images ready for comparison`);
+
+    /*
+    ====================================================
+    STEP 4 — OPENAI COMPARISON
+    ====================================================
+    */
+
+    const comparisons = [];
+
+    for (const product of productImages) {
+
+      sendLog(socket, `🤖 Comparing: ${product.title || "Product"}`);
+
+      try {
+
+        const score = await compareImages(
+          publicImageUrl,
+          product.image
+        );
+
+        comparisons.push({
+          url: product.url,
+          title: product.title,
+          image: product.image,
+          similarity: score
+        });
+
+        sendLog(socket, `✅ Score: ${score}`);
+
+      } catch (err) {
+
+        sendLog(socket, "❌ Comparison failed", "error");
+      }
+    }
+
+    /*
+    ====================================================
+    STEP 5 — FILTER SCORE ≥ 70
+    ====================================================
+    */
+
+    const finalResults = comparisons
+      .filter(p => p.similarity >= 70)
+      .sort((a, b) => b.similarity - a.similarity);
+
+    sendLog(socket, `🎯 Final Matches: ${finalResults.length}`);
+
+    res.json({
+      image: publicImageUrl,
+      results: finalResults
+    });
+
+  } catch (err) {
+
+    console.error(err);
+    sendLog(socket, "🔥 PIPELINE FAILED", "error");
+
+    res.status(500).json({
+      error: "Pipeline failed",
+      detail: err.message
+    });
+
+  }
+
+});
+
+/*
+====================================================
+SOCKET.IO
+====================================================
+*/
+
+io.on("connection", (socket) => {
+
+  socket.emit("connected", {
+    socketId: socket.id
+  });
+
+  console.log("🟢 Client connected");
+
+});
+
+/*
+====================================================
+START SERVER
+====================================================
+*/
+
+server.listen(process.env.PORT || 3000, () => {
+  console.log("🚀 Server running");
+});    },
     {
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
