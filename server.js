@@ -4,6 +4,7 @@ const multer = require("multer");
 const axios = require("axios");
 const http = require("http");
 const { Server } = require("socket.io");
+const cheerio = require("cheerio");
 const { searchWithImage } = require("./serp");
 
 const app = express();
@@ -39,7 +40,7 @@ function sendLog(socket, message, type = "info") {
 
 /*
 ====================================================
-UPLOAD IMAGE TO IMGBB
+UPLOAD TO IMGBB
 ====================================================
 */
 
@@ -111,6 +112,49 @@ async function compareImages(imageA, imageB) {
 
 /*
 ====================================================
+EXTRACT ALL IMAGES FROM PRODUCT PAGE
+====================================================
+*/
+
+async function extractImagesFromProductPage(url) {
+
+  try {
+
+    const page = await axios.get(url, {
+      timeout: 15000,
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+
+    const $ = cheerio.load(page.data);
+
+    let images = [];
+
+    $("img").each((i, el) => {
+
+      const src = $(el).attr("src");
+
+      if (src && src.startsWith("http")) {
+        images.push(src);
+      }
+
+    });
+
+    // Garder seulement les images uniques
+    images = [...new Set(images)];
+
+    return images.slice(0, 5); // 🔥 On prend 5 images max par produit
+
+  } catch (err) {
+
+    console.log("❌ Failed extracting images");
+    return [];
+  }
+}
+
+/*
+====================================================
 ANALYZE ROUTE
 ====================================================
 */
@@ -136,100 +180,99 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     const publicImageUrl = await uploadToImgBB(req.file.buffer);
 
-    sendLog(socket, `✅ Image uploaded: ${publicImageUrl}`);
+    sendLog(socket, "✅ Image uploaded");
 
     /*
     ====================================================
-    STEP 2 — SERPAPI SEARCH
+    STEP 2 — SerpAPI Search
     ====================================================
     */
 
-    const results = await searchWithImage({
+    const serpResults = await searchWithImage({
       imageUrl: publicImageUrl,
       apiKey: process.env.SERPAPI_KEY,
       socket
     });
 
-    sendLog(socket, `📦 ${results.length} results returned from SerpAPI`);
-
     /*
     ====================================================
-    STEP 3 — INTELLIGENT ALIEXPRESS FILTER
+    STEP 3 — Filter AliExpress
     ====================================================
     */
 
-    const aliexpressLinks = results.filter(r => {
+    const aliexpressProducts = serpResults.filter(r => {
 
-      const url = r.link || "";
-      const title = r.title || "";
-      const snippet = r.snippet || "";
-
-      const combined = (url + title + snippet).toLowerCase();
+      const combined = (
+        (r.link || "") +
+        (r.title || "") +
+        (r.snippet || "")
+      ).toLowerCase();
 
       return combined.includes("aliexpress");
 
     }).slice(0, 10);
 
-    sendLog(socket, `🛍 AliExpress matches: ${aliexpressLinks.length}`);
-
-    if (aliexpressLinks.length === 0) {
-      sendLog(socket, "⚠ No AliExpress matches found", "error");
-    }
+    sendLog(socket, `🛍 ${aliexpressProducts.length} products found`);
 
     /*
     ====================================================
-    STEP 4 — PARALLEL AI COMPARISON
+    STEP 4 — Extract Product Images + Compare
     ====================================================
     */
 
-    const comparisons = await Promise.all(
+    const finalResults = [];
 
-      aliexpressLinks.map(async (item) => {
+    for (const product of aliexpressProducts) {
 
-        if (!item.thumbnail) return null;
+      if (!product.link) continue;
+
+      sendLog(socket, `🔎 Extracting images from ${product.link}`);
+
+      const images = await extractImagesFromProductPage(product.link);
+
+      if (images.length === 0) continue;
+
+      let scores = [];
+
+      for (const img of images) {
 
         try {
 
-          sendLog(socket, `🤖 Comparing ${item.title || "Product"}`);
+          sendLog(socket, "🤖 Comparing extracted image...");
 
-          const score = await compareImages(
-            publicImageUrl,
-            item.thumbnail
-          );
+          const score = await compareImages(publicImageUrl, img);
 
-          return {
-            url: item.link,
-            image: item.thumbnail,
-            title: item.title,
-            similarity: score
-          };
+          scores.push(score);
 
         } catch (err) {
-
-          sendLog(socket, "❌ AI comparison failed", "error");
-          return null;
+          continue;
         }
 
-      })
+      }
 
-    );
+      if (scores.length === 0) continue;
+
+      const avgScore =
+        scores.reduce((a, b) => a + b, 0) / scores.length;
+
+      if (avgScore >= 70) {
+
+        finalResults.push({
+          url: product.link,
+          title: product.title,
+          averageScore: avgScore,
+          images
+        });
+
+      }
+
+    }
+
+    sendLog(socket, `🎯 Final Matches: ${finalResults.length}`);
 
     /*
     ====================================================
-    STEP 5 — FILTER SCORE ≥ 70
-    ====================================================
-    */
-
-    const finalResults = comparisons
-      .filter(Boolean)
-      .filter(p => p.similarity >= 70)
-      .sort((a, b) => b.similarity - a.similarity);
-
-    sendLog(socket, `🎯 Final results: ${finalResults.length}`);
-
-    /*
-    ====================================================
-    STEP 6 — RETURN RESULTS
+    STEP 5 — Return Results
     ====================================================
     */
 
@@ -241,7 +284,6 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
   } catch (err) {
 
     console.error(err);
-
     sendLog(socket, "🔥 PIPELINE FAILED", "error");
 
     res.status(500).json({
