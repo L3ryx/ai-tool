@@ -1,7 +1,7 @@
 {
-  "name": "ai-aliexpress-analyzer",
+  "name": "ai-reverse-aliexpress",
   "version": "1.0.0",
-  "description": "Image to AliExpress AI Analyzer",
+  "description": "Reverse Image AliExpress Finder",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
