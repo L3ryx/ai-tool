@@ -6,39 +6,28 @@ SERPAPI IMAGE SEARCH MODULE
 ====================================================
 */
 
-async function searchWithImage({
-  imageUrl,
-  apiKey,
-  socket = null,
-  logger = console
-}) {
+async function searchWithImage({ imageUrl, apiKey, socket = null }) {
 
-  if (!imageUrl) {
-    throw new Error("Missing imageUrl");
-  }
-
-  if (!apiKey) {
-    throw new Error("Missing SerpAPI key");
-  }
-
-  logger.log("🔎 Sending request to SerpAPI...");
+  if (!imageUrl) throw new Error("Missing imageUrl");
+  if (!apiKey) throw new Error("Missing SerpAPI key");
 
   try {
+
+    console.log("🔎 Sending request to SerpAPI...");
 
     const response = await axios.get("https://serpapi.com/search", {
       params: {
         engine: "google_reverse_image",
-        url: imageUrl,              // ✅ PARAM REQUIRED
+        url: imageUrl,  // ✅ REQUIRED PARAM
         api_key: apiKey
       },
-      timeout: 15000
+      timeout: 20000
     });
 
-    logger.log("✅ SerpAPI response received");
+    console.log("✅ SerpAPI response received");
 
-    // Debug full response
-    logger.log("SERP FULL RESPONSE:");
-    logger.log(JSON.stringify(response.data, null, 2));
+    console.log("SERP FULL RESPONSE:");
+    console.log(JSON.stringify(response.data, null, 2));
 
     const results = response.data?.image_results || [];
 
@@ -54,16 +43,13 @@ async function searchWithImage({
 
   } catch (err) {
 
-    const status = err.response?.status;
-    const data = err.response?.data;
-
-    logger.error("🔥 SERPAPI REQUEST FAILED");
-    logger.error("STATUS:", status);
-    logger.error("ERROR DATA:", data);
+    console.error("🔥 SERPAPI ERROR");
+    console.error("STATUS:", err.response?.status);
+    console.error("DATA:", err.response?.data);
 
     if (socket) {
       socket.emit("log", {
-        message: `❌ SerpAPI Error ${status || ""}`,
+        message: `❌ SerpAPI Error ${err.response?.status || ""}`,
         type: "error",
         time: new Date().toISOString()
       });
@@ -73,6 +59,4 @@ async function searchWithImage({
   }
 }
 
-module.exports = {
-  searchWithImage
-};
+module.exports = { searchWithImage };
