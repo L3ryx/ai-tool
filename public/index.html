@@ -4,22 +4,106 @@
 <meta charset="UTF-8">
 <title>AI Reverse AliExpress Finder</title>
 <script src="/socket.io/socket.io.js"></script>
+
 <style>
+
+/* ================= BACKGROUND ================= */
 
 body {
   margin:0;
-  background:#000;
-  color:white;
+  overflow:hidden;
   font-family:Arial;
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  height:100vh;
+  color:white;
 }
 
-.container { width:500px; text-align:center; }
+canvas {
+  position:fixed;
+  top:0;
+  left:0;
+  z-index:-1;
+}
 
-input {
+/* ================= SETTINGS BUTTON ================= */
+
+.settings-btn {
+  position:fixed;
+  top:20px;
+  left:20px;
+  background:#00ff88;
+  border:none;
+  padding:10px 15px;
+  border-radius:8px;
+  font-weight:bold;
+  cursor:pointer;
+  z-index:10;
+}
+
+/* ================= SETTINGS MODAL ================= */
+
+.modal {
+  display:none;
+  position:fixed;
+  top:0;
+  left:0;
+  width:100%;
+  height:100%;
+  background:rgba(0,0,0,0.8);
+  justify-content:center;
+  align-items:center;
+  z-index:20;
+}
+
+.modal-content {
+  background:#111;
+  padding:30px;
+  border-radius:15px;
+  width:400px;
+  text-align:center;
+}
+
+.modal-content input {
+  width:100%;
+  padding:10px;
+  margin:8px 0;
+  border-radius:8px;
+  border:none;
+}
+
+.modal-content button {
+  background:#00ff88;
+  border:none;
+  padding:10px;
+  width:100%;
+  border-radius:8px;
+  font-weight:bold;
+  cursor:pointer;
+}
+
+/* ================= MAIN UI ================= */
+
+.container {
+  position:relative;
+  z-index:2;
+  width:700px;
+  margin:auto;
+  text-align:center;
+  padding-top:80px;
+}
+
+.api-row {
+  display:flex;
+  gap:10px;
+  margin-bottom:10px;
+}
+
+.api-row input {
+  flex:1;
+  padding:10px;
+  border-radius:8px;
+  border:none;
+}
+
+.file-input {
   width:100%;
   padding:10px;
   margin:6px 0;
@@ -27,7 +111,7 @@ input {
   border:none;
 }
 
-button {
+button.main-btn {
   background:#00ff88;
   border:none;
   padding:15px;
@@ -53,16 +137,21 @@ button {
   transition:0.4s;
 }
 
-.spinner { display:none; margin-top:10px; }
-
 .logs {
   margin-top:10px;
-  max-height:120px;
+  max-height:150px;
   overflow:auto;
   background:#111;
   padding:10px;
   border-radius:10px;
   font-size:13px;
+  text-align:left;
+  color:#00ff88;
+}
+
+.error-log {
+  color:red;
+  font-weight:bold;
 }
 
 .product {
@@ -72,27 +161,50 @@ button {
   border-radius:10px;
 }
 
-.score-green { color:#00ff88; }
-.score-orange { color:orange; }
-.score-red { color:red; }
+.score-green {color:#00ff88;}
+.score-orange {color:orange;}
+.score-red {color:red;}
 
 </style>
 </head>
 <body>
 
+<!-- MATRIX BACKGROUND -->
+<canvas id="matrix"></canvas>
+
+<!-- SETTINGS BUTTON -->
+<button class="settings-btn" onclick="toggleModal()">
+⚙ Settings
+</button>
+
+<!-- SETTINGS MODAL -->
+<div class="modal" id="settingsModal">
+  <div class="modal-content">
+    <h3>API Settings</h3>
+
+    <input type="text" id="imgbb" placeholder="IMGBB KEY">
+    <input type="text" id="serpapi" placeholder="SERPAPI KEY">
+    <input type="text" id="openai" placeholder="OPENAI KEY">
+
+    <button onclick="saveSettings()">Save</button>
+    <button onclick="toggleModal()" style="margin-top:10px;background:red;color:white;">
+      Close
+    </button>
+
+  </div>
+</div>
+
 <div class="container">
 
 <h2>🔥 AI Reverse AliExpress Finder</h2>
 
-<input type="text" id="imgbb" placeholder="IMGBB KEY">
-<input type="text" id="serpapi" placeholder="SERPAPI KEY">
-<input type="text" id="openai" placeholder="OPENAI KEY">
-<input type="file" id="image">
+<input type="file" id="image" class="file-input">
 
-<button onclick="start()">START</button>
+<button class="main-btn" onclick="start()">START</button>
 
-<div class="progress"><div class="bar" id="bar"></div></div>
-<div class="spinner" id="spinner">⏳ Analyzing...</div>
+<div class="progress">
+  <div class="bar" id="bar"></div>
+</div>
 
 <div class="logs" id="logs"></div>
 <div id="results"></div>
@@ -101,27 +213,80 @@ button {
 
 <script>
 
+/* ================= MATRIX ================= */
+
+const canvas = document.getElementById("matrix");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const letters = "01ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const fontSize = 14;
+const columns = canvas.width / fontSize;
+const drops = [];
+
+for(let i=0;i<columns;i++){
+  drops[i]=1;
+}
+
+function drawMatrix(){
+  ctx.fillStyle="rgba(0,0,0,0.05)";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  ctx.fillStyle="#00ff88";
+  ctx.font = fontSize+"px monospace";
+
+  for(let i=0;i<drops.length;i++){
+    const text = letters[Math.floor(Math.random()*letters.length)];
+    ctx.fillText(text,i*fontSize,drops[i]*fontSize);
+
+    if(drops[i]*fontSize > canvas.height && Math.random()>0.975){
+      drops[i]=0;
+    }
+
+    drops[i]++;
+  }
+}
+
+setInterval(drawMatrix,50);
+
+/* ================= SETTINGS ================= */
+
+function toggleModal(){
+  const modal = document.getElementById("settingsModal");
+  modal.style.display =
+    modal.style.display === "flex" ? "none" : "flex";
+}
+
+function saveSettings(){
+  toggleModal();
+}
+
+/* ================= SOCKET ================= */
+
 const socket = io();
 let socketId;
 
 socket.on("connect", ()=> socketId = socket.id);
 
-socket.on("log", msg => {
-  document.getElementById("logs").innerHTML += msg + "<br>";
+socket.on("log", msg=>{
+  document.getElementById("logs").innerHTML += msg+"<br>";
   document.getElementById("logs").scrollTop = 9999;
 });
 
-function scoreColor(score){
-  if(score >= 75) return "score-green";
-  if(score >= 40) return "score-orange";
-  return "score-red";
-}
+socket.on("errorLog", msg=>{
+  document.getElementById("logs").innerHTML +=
+    `<div class='error-log'>❌ ${msg}</div>`;
+});
+
+/* ================= START PIPELINE ================= */
 
 async function start(){
-  document.getElementById("spinner").style.display="block";
-  document.getElementById("bar").style.width="30%";
-  document.getElementById("results").innerHTML="";
+
   document.getElementById("logs").innerHTML="";
+  document.getElementById("results").innerHTML="";
+  document.getElementById("bar").style.width="20%";
 
   const form = new FormData();
   form.append("image", document.getElementById("image").files[0]);
@@ -130,20 +295,41 @@ async function start(){
   form.append("openai", document.getElementById("openai").value);
   form.append("socketId", socketId);
 
-  const res = await fetch("/analyze", { method:"POST", body:form });
-  const data = await res.json();
+  try {
 
-  document.getElementById("bar").style.width="100%";
-  document.getElementById("spinner").style.display="none";
+    const res = await fetch("/analyze",{
+      method:"POST",
+      body:form
+    });
 
-  displayResults(data.results);
+    const data = await res.json();
+
+    if(data.error){
+      document.getElementById("logs").innerHTML +=
+        `<div class="error-log">
+          🚨 ${data.error}<br>
+          ${data.detail || ""}
+        </div>`;
+    }
+
+    document.getElementById("bar").style.width="100%";
+    displayResults(data.results);
+
+  } catch(err){
+    document.getElementById("logs").innerHTML +=
+      `<div class="error-log">
+        ❌ Request failed: ${err.message}
+      </div>`;
+  }
 }
 
 function displayResults(results){
+
   const container = document.getElementById("results");
 
   if(!results || results.length===0){
-    container.innerHTML = "<p>No AliExpress matches found.</p>";
+    container.innerHTML =
+      "<div class='error-log'>No AliExpress matches found.</div>";
     return;
   }
 
@@ -152,8 +338,13 @@ function displayResults(results){
       <div class="product">
         <img src="${p.thumbnail}" width="80"><br>
         <b>${p.title}</b><br>
-        <span class="${scoreColor(p.score)}">Score: ${p.score}</span><br>
-        <a href="${p.link}" target="_blank">View Product</a>
+        <span class="${
+          p.score>=75?"score-green":
+          p.score>=40?"score-orange":"score-red"
+        }">
+        Score: ${p.score}
+        </span><br>
+        <a href="${p.link}" target="_blank">View</a>
       </div>
     `;
   });
