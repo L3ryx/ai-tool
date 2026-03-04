@@ -16,29 +16,22 @@ app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-/* ================= SOCKET ================= */
-
-function logStep(socket, step) {
-  socket.emit("log", step);
+function logStep(socket, message) {
+  if (socket) socket.emit("log", message);
 }
-
-/* ================= PIPELINE ================= */
 
 app.post("/analyze", upload.single("image"), async (req, res) => {
 
-  const socketId = req.body.socketId;
-  const socket = io.sockets.sockets.get(socketId);
+  const socket = io.sockets.sockets.get(req.body.socketId);
 
   try {
-
     const { imgbb, serpapi, openai } = req.body;
 
-    if (!req.file) return res.status(400).json({ error: "No image" });
+    if (!req.file) return res.status(400).json({ error: "No image uploaded" });
 
     logStep(socket, "📤 Uploading image to ImgBB...");
 
-    /* 1️⃣ Upload ImgBB */
-
+    // 1️⃣ Upload to ImgBB
     const form = new FormData();
     form.append("image", req.file.buffer.toString("base64"));
 
@@ -50,79 +43,96 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     const imageUrl = imgRes.data.data.url;
 
-    logStep(socket, "🔎 Searching via SerpAPI...");
+    logStep(socket, "🔎 Reverse searching image via Google...");
 
-    /* 2️⃣ SerpAPI */
-
+    // 2️⃣ Google Reverse Image via SerpAPI
     const serp = await axios.get("https://serpapi.com/search", {
       params: {
-        engine: "google_shopping",
-        q: imageUrl,
+        engine: "google_reverse_image",
+        image_url: imageUrl,
         api_key: serpapi
       }
     });
 
-    const products = serp.data.shopping_results || [];
+    const imageResults = serp.data.image_results || [];
 
-    logStep(socket, "🛒 Filtering AliExpress products...");
+    logStep(socket, `📦 Total reverse results: ${imageResults.length}`);
 
-    /* 3️⃣ Filter AliExpress */
-
-    const aliProducts = products.filter(p =>
-      p.link && p.link.includes("aliexpress")
+    // 3️⃣ Filter AliExpress
+    const aliResults = imageResults.filter(r =>
+      r.link && r.link.includes("aliexpress")
     );
 
-    logStep(socket, "🤖 AI comparing products...");
+    logStep(socket, `🛒 AliExpress results found: ${aliResults.length}`);
 
-    /* 4️⃣ OpenAI Compare */
+    let scored = [];
 
-    let scores = [];
+    // 4️⃣ Compare images with OpenAI Vision
+    for (let item of aliResults.slice(0,5)) {
 
-    if (aliProducts.length > 0) {
-
-      const ai = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          model: "gpt-4o-mini",
-          messages: [{
-            role: "user",
-            content: `
-Rate similarity from 0 to 100 for these products vs original image URL:
-${imageUrl}
-
-Products:
-${JSON.stringify(aliProducts.slice(0,10))}
-Return JSON array: [{title, score}]
-`
-          }]
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${openai}`
-          }
-        }
-      );
+      logStep(socket, `🤖 Comparing: ${item.title}`);
 
       try {
-        scores = JSON.parse(ai.data.choices[0].message.content);
+
+        const ai = await axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          {
+            model: "gpt-4o",
+            messages: [{
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Rate similarity between these two product images from 0 to 100. Return ONLY the number."
+                },
+                {
+                  type: "image_url",
+                  image_url: { url: imageUrl }
+                },
+                {
+                  type: "image_url",
+                  image_url: { url: item.thumbnail }
+                }
+              ]
+            }]
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${openai}`,
+              "Content-Type": "application/json"
+            }
+          }
+        );
+
+        const score = parseInt(ai.data.choices[0].message.content) || 0;
+
+        scored.push({
+          title: item.title,
+          link: item.link,
+          thumbnail: item.thumbnail,
+          score
+        });
+
       } catch {
-        scores = [];
+        logStep(socket, "⚠️ AI comparison failed for one item.");
       }
     }
+
+    scored.sort((a,b)=> b.score - a.score);
 
     logStep(socket, "✅ Analysis complete.");
 
     res.json({
-      image: imageUrl,
-      products: aliProducts,
-      scores
+      originalImage: imageUrl,
+      results: scored
     });
 
   } catch (err) {
-    if (socket) logStep(socket, "❌ Error occurred.");
+    logStep(socket, "❌ Error occurred.");
     res.status(500).json({ error: "Pipeline failed", detail: err.message });
   }
-
 });
 
-server.listen(PORT, () => console.log("Server running on", PORT));
+server.listen(PORT, () => {
+  console.log("Server running on port", PORT);
+});
