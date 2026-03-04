@@ -1,139 +1,243 @@
-// ============================================
-// IMAGE → SERPAPI → FILTER → AI COMPARE → LOGS
-// ============================================
-
+require("dotenv").config();
 const express = require("express");
 const multer = require("multer");
 const axios = require("axios");
-const fs = require("fs");
+const http = require("http");
+const { Server } = require("socket.io");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static("public"));
+const server = http.createServer(app);
+const io = new Server(server);
 
 const upload = multer({
   storage: multer.memoryStorage()
 });
 
-/* ============================================
-   PIPELINE
-============================================ */
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static("public"));
 
-app.post("/analyze", upload.single("image"), async (req, res) => {
+/*
+====================================================
+LOG SYSTEM
+====================================================
+*/
 
-  try {
+function sendLog(socket, message, type = "info") {
 
-    const { serpapi, openai } = req.body;
+  console.log(`[${type}] ${message}`);
 
-    if (!req.file)
-      return res.json({ error: "Image missing" });
-
-    if (!serpapi || !openai)
-      return res.json({ error: "API keys missing" });
-
-    // --------------------------------------
-    // 1️⃣ SERPAPI SEARCH
-    // --------------------------------------
-
-    const serp = await axios.get("https://serpapi.com/search", {
-      params: {
-        engine: "google_shopping",
-        q: "product",
-        api_key: serpapi
-      }
+  if (socket) {
+    socket.emit("log", {
+      message,
+      type,
+      time: new Date().toISOString()
     });
+  }
+}
 
-    const products = serp.data.shopping_results || [];
+/*
+====================================================
+UPLOAD IMAGE TO IMGBB (TO FIX 414)
+====================================================
+*/
 
-    // --------------------------------------
-    // 2️⃣ FILTER ALIEXPRESS
-    // --------------------------------------
+async function uploadToImgBB(imageBuffer) {
 
-    const aliProducts = products.filter(p =>
-      p.link && p.link.includes("aliexpress")
-    );
+  const base64 = imageBuffer.toString("base64");
 
-    // --------------------------------------
-    // 3️⃣ OPENAI PRODUCT COMPARISON
-    // --------------------------------------
+  const response = await axios.post(
+    "https://api.imgbb.com/1/upload",
+    new URLSearchParams({
+      key: process.env.IMGBB_KEY,
+      image: base64
+    }),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    }
+  );
 
-    let comparison = null;
+  return response.data.data.url;
+}
 
-    if (aliProducts.length > 0) {
+/*
+====================================================
+SIMILARITY
+====================================================
+*/
 
-      const ai = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
+async function calculateSimilarity(base64A, base64B) {
+
+  const response = await axios.post(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      model: "gpt-4o-mini",
+      messages: [
         {
-          model: "gpt-3.5-turbo",
-          messages: [
+          role: "user",
+          content: [
+            { type: "text", text: "Return only similarity 0 to 1." },
             {
-              role: "user",
-              content: `
-Compare these products:
-
-${JSON.stringify(aliProducts.slice(0,5), null, 2)}
-
-Return best product + why.
-`
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${base64A}`
+              }
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${base64B}`
+              }
             }
           ]
-        },
+        }
+      ]
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      }
+    }
+  );
+
+  const text = response.data.choices[0].message.content;
+  const match = text.match(/0\.\d+|1(\.0+)?/);
+
+  return match ? parseFloat(match[0]) : 0;
+}
+
+/*
+====================================================
+ANALYZE ROUTE
+====================================================
+*/
+
+app.post("/analyze", upload.array("images"), async (req, res) => {
+
+  const socketId = req.body.socketId;
+  const socket = io.sockets.sockets.get(socketId);
+
+  const results = [];
+
+  for (const file of req.files) {
+
+    sendLog(socket, `🖼 Processing ${file.originalname}`);
+
+    /*
+    ============================================
+    STEP 1 — UPLOAD IMAGE TO GET PUBLIC URL
+    ============================================
+    */
+
+    let publicImageUrl;
+
+    try {
+
+      sendLog(socket, "📤 Uploading image to ImgBB");
+
+      publicImageUrl = await uploadToImgBB(file.buffer);
+
+      sendLog(socket, "✅ Image uploaded successfully");
+
+    } catch (err) {
+
+      sendLog(socket, "❌ Image upload failed", "error");
+
+      continue;
+    }
+
+    /*
+    ============================================
+    STEP 2 — CALL SERPAPI WITH IMAGE URL
+    ============================================
+    */
+
+    sendLog(socket, "🔎 Calling SerpAPI");
+
+    let serpResults = [];
+
+    try {
+
+      const response = await axios.get(
+        "https://serpapi.com/search",
         {
-          headers: {
-            Authorization: `Bearer ${openai}`,
-            "Content-Type": "application/json"
+          params: {
+            engine: "google_reverse_image",
+            image_url: publicImageUrl,
+            api_key: process.env.SERPAPI_KEY
           }
         }
       );
 
-      comparison = ai.data.choices[0].message.content;
+      serpResults = response.data?.image_results || [];
+
+      sendLog(socket, `📦 ${serpResults.length} results found`);
+
+    } catch (err) {
+
+      sendLog(
+        socket,
+        `❌ SerpAPI error | ${err.response?.status}`,
+        "error"
+      );
+
+      serpResults = [];
     }
 
-    // --------------------------------------
-    // 4️⃣ LOGS
-    // --------------------------------------
+    /*
+    ============================================
+    STEP 3 — FILTER ALIEXPRESS
+    ============================================
+    */
 
-    const log = {
-      time: new Date(),
-      totalProducts: aliProducts.length
-    };
+    const aliexpressLinks = serpResults
+      .filter(r => r.link?.includes("aliexpress.com"))
+      .slice(0, 10);
 
-    fs.appendFileSync("logs.json", JSON.stringify(log) + "\n");
+    const matches = [];
 
-    // --------------------------------------
-    // RESPONSE
-    // --------------------------------------
+    for (const item of aliexpressLinks) {
 
-    res.json({
-      products: aliProducts,
-      comparison
+      matches.push({
+        url: item.link,
+        similarity: 70 // placeholder (tu peux remettre ton IA ici)
+      });
+
+    }
+
+    results.push({
+      image: file.originalname,
+      matches
     });
-
-  } catch (err) {
-
-    console.error(err.message);
-
-    res.status(500).json({
-      error: "Pipeline failed",
-      debug: err.message
-    });
-
   }
+
+  res.json({ results });
+});
+
+/*
+====================================================
+SOCKET
+====================================================
+*/
+
+io.on("connection", (socket) => {
+
+  socket.emit("connected", {
+    socketId: socket.id
+  });
+
+  console.log("🟢 Client connected");
 
 });
 
-/* ============================================
-   LIVE LOGS
-============================================ */
+/*
+====================================================
+START
+====================================================
+*/
 
-app.get("/logs", (req, res) => {
-
-  if (!fs.existsSync("logs.json"))
-    return res.json([]);
-
-  const logs = fs.readFileSync("logs.json", "utf8")
-    .split("\n")
-    .filter
+server.listen(process.env.PORT || 3000, () => {
+  console.log("🚀 Server running");
+});
