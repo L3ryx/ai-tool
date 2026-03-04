@@ -2,41 +2,127 @@
 <html>
 <head>
 <title>AI Tool</title>
+
+<style>
+
+body{
+  background:black;
+  color:white;
+  font-family:Arial;
+  text-align:center;
+}
+
+button{
+  background:lime;
+  border:none;
+  padding:12px 20px;
+  font-size:16px;
+  cursor:pointer;
+  border-radius:5px;
+}
+
+#results{
+  margin-top:30px;
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:center;
+  gap:20px;
+}
+
+.card{
+  background:#111;
+  padding:15px;
+  border:1px solid lime;
+  width:250px;
+  border-radius:10px;
+}
+
+.card img{
+  width:100%;
+  border-radius:8px;
+}
+
+.score{
+  color:yellow;
+  font-weight:bold;
+}
+
+</style>
+
 </head>
-<body style="background:black;color:white;font-family:monospace;">
+<body>
 
-<h2>🔥 Live Logs</h2>
+<h1>🔥 AI Image Search</h1>
 
-<div id="logs" style="
-background:#111;
-padding:20px;
-height:400px;
-overflow:auto;
-border:1px solid lime;
-"></div>
+<input type="file" id="fileInput"/>
+<br><br>
 
-<script src="/socket.io/socket.io.js"></script>
+<button onclick="startAnalysis()">🚀 Analyze Image</button>
+
+<div id="results"></div>
 
 <script>
 
-const socket = io();
-const logsDiv = document.getElementById("logs");
+/*
+====================================================
+START ANALYSIS
+====================================================
+*/
 
-socket.on("log", (data) => {
+async function startAnalysis(){
 
-  const div = document.createElement("div");
+  const fileInput = document.getElementById("fileInput");
+  const resultsDiv = document.getElementById("results");
 
-  div.innerHTML = `
-    <span style="color:gray">[${data.time}]</span>
-    <span style="color:cyan">[${data.type}]</span>
-    ${data.message}
-  `;
+  if(!fileInput.files[0]){
+    alert("Select an image");
+    return;
+  }
 
-  logsDiv.appendChild(div);
+  resultsDiv.innerHTML = "⏳ Processing...";
 
-  logsDiv.scrollTop = logsDiv.scrollHeight;
+  const formData = new FormData();
+  formData.append("image", fileInput.files[0]);
 
-});
+  const response = await fetch("/analyze", {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await response.json();
+
+  resultsDiv.innerHTML = "";
+
+  if(!data.results || data.results.length === 0){
+    resultsDiv.innerHTML = "<h2>No matches found</h2>";
+    return;
+  }
+
+  /*
+  ====================================================
+  DISPLAY RESULTS
+  ====================================================
+  */
+
+  data.results.forEach(result => {
+
+    const card = document.createElement("div");
+    card.className = "card";
+
+    card.innerHTML = `
+      <h3>${result.title || "Product"}</h3>
+      <img src="${result.image}" />
+      <p>Similarity: <span class="score">${result.similarity}%</span></p>
+      <a href="${result.url}" target="_blank" style="color:cyan">
+        View Product
+      </a>
+    `;
+
+    resultsDiv.appendChild(card);
+
+  });
+
+}
 
 </script>
 
