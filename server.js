@@ -1,167 +1,128 @@
-require("dotenv").config();
 const express = require("express");
 const multer = require("multer");
 const axios = require("axios");
+const FormData = require("form-data");
 const http = require("http");
 const { Server } = require("socket.io");
-const path = require("path");
-const fs = require("fs");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const uploadDir = path.join(__dirname, "uploads");
+const PORT = process.env.PORT || 3000;
 
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
-}
-
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: uploadDir,
-    filename: (req, file, cb) => {
-      cb(null, Date.now() + "-" + file.originalname);
-    }
-  })
-});
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use("/uploads", express.static(uploadDir));
 app.use(express.static("public"));
+app.use(express.json());
 
-/*
-====================================================
-LOG SYSTEM
-====================================================
-*/
+const upload = multer({ storage: multer.memoryStorage() });
 
-function sendLog(socket, message, type = "info") {
+/* ================= SOCKET ================= */
 
-  console.log(`[${type}] ${message}`);
-
-  if (socket) {
-    socket.emit("log", {
-      message,
-      type,
-      time: new Date().toISOString()
-    });
-  }
+function logStep(socket, step) {
+  socket.emit("log", step);
 }
 
-/*
-====================================================
-ANALYZE ROUTE
-====================================================
-*/
+/* ================= PIPELINE ================= */
 
-app.post("/analyze", upload.array("images"), async (req, res) => {
+app.post("/analyze", upload.single("image"), async (req, res) => {
 
   const socketId = req.body.socketId;
   const socket = io.sockets.sockets.get(socketId);
 
-  const results = [];
+  try {
 
-  for (const file of req.files) {
+    const { imgbb, serpapi, openai } = req.body;
 
-    sendLog(socket, `🖼 Processing ${file.filename}`);
+    if (!req.file) return res.status(400).json({ error: "No image" });
 
-    /*
-    ============================================
-    STEP 1 — CREATE PUBLIC LOCAL URL
-    ============================================
-    */
+    logStep(socket, "📤 Uploading image to ImgBB...");
 
-    const publicUrl =
-      `${req.protocol}://${req.get("host")}/uploads/${file.filename}`;
+    /* 1️⃣ Upload ImgBB */
 
-    sendLog(socket, `🌍 Public URL created: ${publicUrl}`);
+    const form = new FormData();
+    form.append("image", req.file.buffer.toString("base64"));
 
-    /*
-    ============================================
-    STEP 2 — CALL SERPAPI
-    ============================================
-    */
+    const imgRes = await axios.post(
+      `https://api.imgbb.com/1/upload?key=${imgbb}`,
+      form,
+      { headers: form.getHeaders() }
+    );
 
-    sendLog(socket, "🔎 Calling SerpAPI");
+    const imageUrl = imgRes.data.data.url;
 
-    let serpResults = [];
+    logStep(socket, "🔎 Searching via SerpAPI...");
 
-    try {
+    /* 2️⃣ SerpAPI */
 
-      const response = await axios.get(
-        "https://serpapi.com/search",
+    const serp = await axios.get("https://serpapi.com/search", {
+      params: {
+        engine: "google_shopping",
+        q: imageUrl,
+        api_key: serpapi
+      }
+    });
+
+    const products = serp.data.shopping_results || [];
+
+    logStep(socket, "🛒 Filtering AliExpress products...");
+
+    /* 3️⃣ Filter AliExpress */
+
+    const aliProducts = products.filter(p =>
+      p.link && p.link.includes("aliexpress")
+    );
+
+    logStep(socket, "🤖 AI comparing products...");
+
+    /* 4️⃣ OpenAI Compare */
+
+    let scores = [];
+
+    if (aliProducts.length > 0) {
+
+      const ai = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
         {
-          params: {
-            engine: "google_reverse_image",
-            image_url: publicUrl,
-            api_key: process.env.SERPAPI_KEY
+          model: "gpt-4o-mini",
+          messages: [{
+            role: "user",
+            content: `
+Rate similarity from 0 to 100 for these products vs original image URL:
+${imageUrl}
+
+Products:
+${JSON.stringify(aliProducts.slice(0,10))}
+Return JSON array: [{title, score}]
+`
+          }]
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${openai}`
           }
         }
       );
 
-      serpResults = response.data?.image_results || [];
-
-      sendLog(socket, `📦 ${serpResults.length} results found`);
-
-    } catch (err) {
-
-      sendLog(
-        socket,
-        `❌ SerpAPI error | ${err.response?.status || "No Status"} | ${err.message}`,
-        "error"
-      );
-
-      serpResults = [];
+      try {
+        scores = JSON.parse(ai.data.choices[0].message.content);
+      } catch {
+        scores = [];
+      }
     }
 
-    /*
-    ============================================
-    STEP 3 — FILTER ALIEXPRESS
-    ============================================
-    */
+    logStep(socket, "✅ Analysis complete.");
 
-    const matches = serpResults
-      .filter(r => r.link?.includes("aliexpress.com"))
-      .slice(0, 10)
-      .map(r => ({
-        url: r.link,
-        similarity: 70
-      }));
-
-    results.push({
-      image: file.filename,
-      publicUrl,
-      matches
+    res.json({
+      image: imageUrl,
+      products: aliProducts,
+      scores
     });
+
+  } catch (err) {
+    if (socket) logStep(socket, "❌ Error occurred.");
+    res.status(500).json({ error: "Pipeline failed", detail: err.message });
   }
 
-  res.json({ results });
 });
 
-/*
-====================================================
-SOCKET
-====================================================
-*/
-
-io.on("connection", (socket) => {
-
-  socket.emit("connected", {
-    socketId: socket.id
-  });
-
-  console.log("🟢 Client connected");
-
-});
-
-/*
-====================================================
-START
-====================================================
-*/
-
-server.listen(process.env.PORT || 3000, () => {
-  console.log("🚀 Server running");
-});
+server.listen(PORT, () => console.log("Server running on", PORT));
