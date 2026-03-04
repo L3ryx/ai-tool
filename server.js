@@ -1,10 +1,10 @@
 require("dotenv").config();
+
 const express = require("express");
 const multer = require("multer");
 const axios = require("axios");
 const http = require("http");
 const { Server } = require("socket.io");
-const { searchWithImage } = require("./serp");
 
 const app = express();
 const server = http.createServer(app);
@@ -20,13 +20,13 @@ app.use(express.static("public"));
 
 /*
 ====================================================
-LOG SYSTEM (LIVE)
+LIVE LOG SYSTEM
 ====================================================
 */
 
 function sendLog(socket, message, type = "info") {
 
-  const logData = {
+  const log = {
     message,
     type,
     time: new Date().toISOString()
@@ -35,7 +35,7 @@ function sendLog(socket, message, type = "info") {
   console.log(`[${type}] ${message}`);
 
   if (socket) {
-    socket.emit("log", logData);
+    socket.emit("log", log);
   }
 }
 
@@ -67,6 +67,25 @@ async function uploadToImgBB(buffer) {
 
 /*
 ====================================================
+SERPAPI IMAGE SEARCH
+====================================================
+*/
+
+async function searchWithImage(imageUrl, apiKey) {
+
+  const response = await axios.get("https://serpapi.com/search", {
+    params: {
+      engine: "google_reverse_image",
+      image_url: imageUrl,
+      api_key: apiKey
+    }
+  });
+
+  return response.data.image_results || [];
+}
+
+/*
+====================================================
 OPENAI IMAGE COMPARISON
 ====================================================
 */
@@ -83,7 +102,7 @@ async function compareImages(imageA, imageB) {
           content: [
             {
               type: "text",
-              text: "Compare these two product images and return ONLY a similarity score between 0 and 100."
+              text: "Return only a similarity score between 0 and 100."
             },
             {
               type: "image_url",
@@ -113,7 +132,7 @@ async function compareImages(imageA, imageB) {
 
 /*
 ====================================================
-ANALYZE ROUTE
+ANALYZE PIPELINE
 ====================================================
 */
 
@@ -135,70 +154,59 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
     sendLog(socket, "✅ Image uploaded");
 
     /*
-    ====================================================
-    STEP 1 — SERPAPI SEARCH
-    ====================================================
+    ================================================
+    SERPAPI SEARCH
+    ================================================
     */
 
-    sendLog(socket, "🔎 Searching products via SerpAPI...");
+    sendLog(socket, "🔎 Searching via SerpAPI...");
 
-    const serpResults = await searchWithImage({
-      imageUrl: publicImageUrl,
-      apiKey: process.env.SERPAPI_KEY,
-      socket
-    });
+    const serpResults = await searchWithImage(
+      publicImageUrl,
+      process.env.SERPAPI_KEY
+    );
 
     sendLog(socket, `📦 ${serpResults.length} results found`);
 
     /*
-    ====================================================
-    STEP 2 — FILTER ALIEXPRESS
-    ====================================================
+    ================================================
+    FILTER ALIEXPRESS
+    ================================================
     */
 
-    const aliexpressProducts = serpResults.filter(r => {
+    const aliexpress = serpResults
+      .filter(r =>
+        (r.link || "").toLowerCase().includes("aliexpress")
+      )
+      .slice(0, 10);
 
-      const combined = (
-        (r.link || "") +
-        (r.title || "") +
-        (r.snippet || "")
-      ).toLowerCase();
-
-      return combined.includes("aliexpress");
-
-    }).slice(0, 10);
-
-    sendLog(socket, `🛍 ${aliexpressProducts.length} AliExpress products`);
+    sendLog(socket, `🛍 ${aliexpress.length} AliExpress products`);
 
     /*
-    ====================================================
-    STEP 3 — USE IMAGES FROM SERPAPI
-    ====================================================
+    ================================================
+    USE IMAGES FROM SERPAPI
+    ================================================
     */
 
-    const productImages = aliexpressProducts.map(product => {
+    const products = aliexpress.map(p => ({
+      url: p.link,
+      title: p.title,
+      image: p.thumbnail || p.image || null
+    })).filter(p => p.image);
 
-      return {
-        url: product.link,
-        title: product.title,
-        image: product.thumbnail || product.image || null
-      };
-
-    }).filter(p => p.image);
-
-    sendLog(socket, `🖼 ${productImages.length} images ready for comparison`);
+    sendLog(socket, `🖼 ${products.length} images ready for AI comparison`);
 
     /*
-    ====================================================
-    STEP 4 — OPENAI COMPARISON
-    ====================================================
+    ================================================
+    AI COMPARISON
+    ================================================
     */
 
-    const comparisons = [];
+    const results = [];
 
-    for (const product of productImages) {
+    for (const product of products) {
 
-      sendLog(socket, `🤖 Comparing: ${product.title || "Product"}`);
+      sendLog(socket, `🤖 Comparing ${product.title || "Product"}`);
 
       try {
 
@@ -207,14 +215,17 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
           product.image
         );
 
-        comparisons.push({
-          url: product.url,
-          title: product.title,
-          image: product.image,
-          similarity: score
-        });
+        sendLog(socket, `✅ Score = ${score}`);
 
-        sendLog(socket, `✅ Score: ${score}`);
+        if (score >= 70) {
+
+          results.push({
+            url: product.url,
+            title: product.title,
+            image: product.image,
+            similarity: score
+          });
+        }
 
       } catch (err) {
 
@@ -222,21 +233,11 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
       }
     }
 
-    /*
-    ====================================================
-    STEP 5 — FILTER SCORE ≥ 70
-    ====================================================
-    */
-
-    const finalResults = comparisons
-      .filter(p => p.similarity >= 70)
-      .sort((a, b) => b.similarity - a.similarity);
-
-    sendLog(socket, `🎯 Final Matches: ${finalResults.length}`);
+    sendLog(socket, `🎯 Final matches: ${results.length}`);
 
     res.json({
       image: publicImageUrl,
-      results: finalResults
+      results
     });
 
   } catch (err) {
@@ -246,9 +247,8 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     res.status(500).json({
       error: "Pipeline failed",
-      detail: err.message
+      message: err.message
     });
-
   }
 
 });
@@ -261,11 +261,11 @@ SOCKET.IO
 
 io.on("connection", (socket) => {
 
+  console.log("🟢 Client connected");
+
   socket.emit("connected", {
     socketId: socket.id
   });
-
-  console.log("🟢 Client connected");
 
 });
 
@@ -275,187 +275,8 @@ START SERVER
 ====================================================
 */
 
-server.listen(process.env.PORT || 3000, () => {
-  console.log("🚀 Server running");
-});
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      }
-    }
-  );
+const PORT = process.env.PORT || 3000;
 
-  const text = response.data.choices[0].message.content;
-  const score = parseInt(text.match(/\d+/)?.[0] || "0");
-
-  return score;
-}
-
-/*
-====================================================
-ANALYZE ROUTE
-====================================================
-*/
-
-app.post("/analyze", upload.single("image"), async (req, res) => {
-
-  const socketId = req.body.socketId;
-  const socket = io.sockets.sockets.get(socketId);
-
-  if (!req.file) {
-    return res.status(400).json({ error: "No image uploaded" });
-  }
-
-  try {
-
-    sendLog(socket, "📤 Uploading image to ImgBB...");
-
-    const publicImageUrl = await uploadToImgBB(req.file.buffer);
-
-    sendLog(socket, "✅ Image uploaded");
-
-    /*
-    ====================================================
-    STEP 1 — SERPAPI SEARCH
-    ====================================================
-    */
-
-    const serpResults = await searchWithImage({
-      imageUrl: publicImageUrl,
-      apiKey: process.env.SERPAPI_KEY,
-      socket
-    });
-
-    sendLog(socket, `🔎 ${serpResults.length} results found`);
-
-    /*
-    ====================================================
-    STEP 2 — FILTER ALIEXPRESS
-    ====================================================
-    */
-
-    const aliexpressProducts = serpResults.filter(r => {
-
-      const combined = (
-        (r.link || "") +
-        (r.title || "") +
-        (r.snippet || "")
-      ).toLowerCase();
-
-      return combined.includes("aliexpress");
-
-    }).slice(0, 10);
-
-    sendLog(socket, `🛍 ${aliexpressProducts.length} AliExpress products`);
-
-    /*
-    ====================================================
-    STEP 3 — USE IMAGES RETURNED BY SERPAPI
-    ====================================================
-    */
-
-    const productImages = aliexpressProducts.map(product => {
-
-      return {
-        url: product.link,
-        title: product.title,
-        image: product.thumbnail || product.image || null
-      };
-
-    }).filter(p => p.image);
-
-    sendLog(socket, `🖼 ${productImages.length} images ready for comparison`);
-
-    /*
-    ====================================================
-    STEP 4 — OPENAI COMPARISON
-    ====================================================
-    */
-
-    const comparisons = await Promise.all(
-
-      productImages.map(async (product) => {
-
-        try {
-
-          sendLog(socket, `🤖 Comparing ${product.title || "Product"}`);
-
-          const score = await compareImages(
-            publicImageUrl,
-            product.image
-          );
-
-          return {
-            url: product.url,
-            title: product.title,
-            image: product.image,
-            similarity: score
-          };
-
-        } catch (err) {
-
-          sendLog(socket, "❌ AI comparison failed", "error");
-          return null;
-        }
-
-      })
-
-    );
-
-    /*
-    ====================================================
-    STEP 5 — FILTER SCORE ≥ 70
-    ====================================================
-    */
-
-    const finalResults = comparisons
-      .filter(Boolean)
-      .filter(p => p.similarity >= 70)
-      .sort((a, b) => b.similarity - a.similarity);
-
-    sendLog(socket, `🎯 Final matches: ${finalResults.length}`);
-
-    res.json({
-      image: publicImageUrl,
-      results: finalResults
-    });
-
-  } catch (err) {
-
-    console.error(err);
-    sendLog(socket, "🔥 PIPELINE FAILED", "error");
-
-    res.status(500).json({
-      error: "Pipeline failed",
-      detail: err.message
-    });
-
-  }
-
-});
-
-/*
-====================================================
-SOCKET
-====================================================
-*/
-
-io.on("connection", (socket) => {
-
-  socket.emit("connected", {
-    socketId: socket.id
-  });
-
-  console.log("🟢 Client connected");
-
-});
-
-/*
-====================================================
-START SERVER
-====================================================
-*/
-
-server.listen(process.env.PORT || 3000, () => {
-  console.log("🚀 Server running");
+server.listen(PORT, () => {
+  console.log("🚀 Server running on port", PORT);
 });
