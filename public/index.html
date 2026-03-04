@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>AI Pipeline</title>
+<title>AI Pipeline Pro</title>
 
 <style>
 
@@ -18,55 +18,76 @@ body {
     text-align: center;
 }
 
+/* ================= CONTAINER ================= */
+
 .container {
-    width: 400px;
+    width: 420px;
 }
+
+/* ================= INPUTS ================= */
 
 input {
     width: 100%;
-    padding: 10px;
+    padding: 12px;
     margin: 8px 0;
-    border-radius: 6px;
+    border-radius: 8px;
     border: none;
 }
 
+/* ================= BUTTON PRO ================= */
+
 button {
     width: 100%;
-    padding: 15px;
-    border-radius: 10px;
+    padding: 16px;
+    border-radius: 12px;
     border: none;
     background: #00ff88;
     color: black;
     font-weight: bold;
     font-size: 18px;
     cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 0 10px #00ff88;
 }
 
 button:hover {
-    opacity: 0.8;
+    transform: scale(1.05);
 }
+
+button.loading {
+    background: #ffaa00;
+    box-shadow: 0 0 25px #ffaa00;
+}
+
+/* ================= PROGRESS BAR ================= */
 
 .progress-container {
     width: 100%;
-    background: #222;
+    background: #111;
     border-radius: 20px;
     margin-top: 20px;
-    height: 20px;
+    height: 22px;
+    overflow: hidden;
 }
 
 .progress-bar {
     height: 100%;
     width: 0%;
-    background: #00ff88;
+    background: linear-gradient(90deg, #00ff88, #00ccff);
     border-radius: 20px;
-    transition: width 0.5s;
+    transition: width 0.6s ease;
 }
+
+/* ================= LOGS ================= */
 
 #logs {
     margin-top: 20px;
-    font-size: 14px;
+    font-size: 13px;
     max-height: 150px;
-    overflow: auto;
+    overflow-y: auto;
+    background: #111;
+    padding: 10px;
+    border-radius: 10px;
 }
 
 </style>
@@ -75,20 +96,20 @@ button:hover {
 
 <div class="container">
 
-<h2>AI Product Analyzer</h2>
+<h2>🚀 AI Product Analyzer</h2>
 
-<p>IMGBB Key</p>
+<p>IMGBB</p>
 <input type="text" id="imgbb">
 
-<p>SerpAPI Key</p>
+<p>SerpAPI</p>
 <input type="text" id="serpapi">
 
-<p>OpenAI Key</p>
+<p>OpenAI</p>
 <input type="text" id="openai">
 
 <input type="file" id="image">
 
-<button onclick="startPipeline()">START</button>
+<button id="startBtn" onclick="startPipeline()">START</button>
 
 <div class="progress-container">
 <div class="progress-bar" id="progress"></div>
@@ -100,7 +121,16 @@ button:hover {
 
 <script>
 
+/* ================= START PIPELINE ================= */
+
 async function startPipeline() {
+
+    const btn = document.getElementById("startBtn");
+    const progress = document.getElementById("progress");
+
+    btn.classList.add("loading");
+    btn.innerText = "LOADING...";
+    progress.style.width = "5%";
 
     const file = document.getElementById("image").files[0];
 
@@ -110,23 +140,29 @@ async function startPipeline() {
     formData.append("serpapi", document.getElementById("serpapi").value);
     formData.append("openai", document.getElementById("openai").value);
 
-    // Reset progress
-    document.getElementById("progress").style.width = "10%";
+    progress.style.width = "20%"; // Upload
 
     const res = await fetch("/analyze", {
         method: "POST",
         body: formData
     });
 
+    progress.style.width = "80%"; // Processing
+
     const data = await res.json();
 
-    document.getElementById("progress").style.width = "100%";
+    progress.style.width = "100%"; // Done
 
     document.getElementById("logs").innerText =
         JSON.stringify(data, null, 2);
 
+    btn.innerText = "DONE ✅";
+    btn.classList.remove("loading");
+
     loadLogs();
 }
+
+/* ================= LIVE LOGS ================= */
 
 async function loadLogs() {
 
@@ -135,7 +171,6 @@ async function loadLogs() {
 
     const progress = document.getElementById("progress");
 
-    // Synchronise barre avec nombre de logs
     if (logs.length > 0) {
         let percent = Math.min(logs.length * 20, 100);
         progress.style.width = percent + "%";
