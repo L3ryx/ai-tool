@@ -16,7 +16,7 @@ app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-function logStep(socket,msg){
+function log(socket,msg){
   if(socket) socket.emit("log",msg);
 }
 
@@ -31,48 +31,49 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
     if(!req.file)
       return res.status(400).json({ error:"No image uploaded" });
 
-    /* ================= 1️⃣ Upload Image ================= */
+    /* ================= 1️⃣ Upload Image To ImgBB ================= */
 
-    logStep(socket,"📤 Uploading image to ImgBB...");
+    log(socket,"📤 Uploading image...");
 
     const form = new FormData();
     form.append("image", req.file.buffer.toString("base64"));
 
-    const imgRes = await axios.post(
+    const uploadRes = await axios.post(
       `https://api.imgbb.com/1/upload?key=${imgbb}`,
       form,
       { headers: form.getHeaders() }
     );
 
-    const imageUrl = imgRes.data.data.url;
+    const imageUrl = uploadRes.data.data.url;
 
-    /* ================= 2️⃣ AliExpress Image Search ================= */
+    /* ================= 2️⃣ Google Image Reverse Search ================= */
 
-    logStep(socket,"🔎 Searching directly on AliExpress...");
+    log(socket,"🔎 Searching on Google Images...");
 
     const search = await axios.get("https://serpapi.com/search",{
       params:{
-        engine:"aliexpress_search",
-        q:imageUrl,
+        engine:"google_reverse_image",
+        image_url:imageUrl,
         api_key:serpapi
       }
     });
 
-    const products = search.data.products || [];
+    const results = search.data.image_results || [];
 
-    logStep(socket,"🛍 Products found: " + products.length);
+    // 🔥 Prendre les 10 premières images
+    const topImages = results.slice(0,10);
 
-    const topProducts = products.slice(0,10);
+    log(socket,"🖼 Top images found: " + topImages.length);
 
-    /* ================= 3️⃣ Compare 10 Products ================= */
+    /* ================= 3️⃣ Compare With OpenAI Vision ================= */
 
-    let scoredResults = [];
+    let finalResults = [];
 
-    for(let product of topProducts){
+    for(let img of topImages){
 
-      if(!product.image) continue;
+      if(!img.thumbnail) continue;
 
-      logStep(socket,"🤖 Comparing: " + product.title);
+      log(socket,"🤖 Comparing image...");
 
       try{
 
@@ -85,7 +86,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
               content:[
                 {
                   type:"text",
-                  text:"Compare these images and return only a similarity score from 0 to 100"
+                  text:"Compare these images and return ONLY similarity score 0-100"
                 },
                 {
                   type:"image_url",
@@ -93,7 +94,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
                 },
                 {
                   type:"image_url",
-                  image_url:{ url:product.image }
+                  image_url:{ url:img.thumbnail }
                 }
               ]
             }]
@@ -108,43 +109,40 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
         const score =
           parseInt(ai.data.choices[0].message.content) || 0;
 
-        scoredResults.push({
-          title: product.title,
-          image: product.image,
-          link: product.link,
-          price: product.price,
-          score
-        });
+        // 🔥 Garder seulement les images similaires
+        if(score >= 70){
+
+          finalResults.push({
+            image: img.thumbnail,
+            link: img.link,
+            title: img.title || "Image Match",
+            score
+          });
+
+        }
 
       }catch(err){
-        logStep(socket,"❌ AI comparison failed");
+        log(socket,"❌ AI comparison failed for one image");
       }
     }
 
-    /* ================= 4️⃣ Filter 70–80 ================= */
-
-    scoredResults.sort((a,b)=> b.score - a.score);
-
-    const filtered = scoredResults.filter(p =>
-      p.score >= 70 && p.score <= 80
-    );
-
-    logStep(socket,"🎯 Final Results: " + filtered.length);
+    log(socket,"🎯 Similar images found: " + finalResults.length);
 
     res.json({
-      results: filtered
+      results: finalResults
     });
 
   }catch(err){
 
     console.error(err);
 
-    logStep(socket,"🔥 PIPELINE FAILED");
+    log(socket,"🔥 PIPELINE FAILED");
 
     res.status(500).json({
       error:"Pipeline failed",
       detail: err.message
     });
+
   }
 
 });
