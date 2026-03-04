@@ -4,6 +4,7 @@ const multer = require("multer");
 const axios = require("axios");
 const http = require("http");
 const { Server } = require("socket.io");
+const { searchWithImage } = require("./serp");
 
 const app = express();
 const server = http.createServer(app);
@@ -64,7 +65,7 @@ async function uploadToImgBB(buffer) {
 
 /*
 ====================================================
-OPENAI VISION COMPARISON
+OPENAI IMAGE COMPARISON
 ====================================================
 */
 
@@ -135,39 +136,28 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     const publicImageUrl = await uploadToImgBB(req.file.buffer);
 
-    sendLog(socket, "✅ Image uploaded");
-    sendLog(socket, `🔗 Image URL: ${publicImageUrl}`);
+    sendLog(socket, `✅ Image uploaded: ${publicImageUrl}`);
 
     /*
     ============================================
-    STEP 2 — Google Reverse Image (STABLE)
+    STEP 2 — SERPAPI SEARCH (MODULE SEPARATE)
     ============================================
     */
 
-    sendLog(socket, "🔎 Searching with Google Reverse Image...");
-
-    const serp = await axios.get("https://serpapi.com/search", {
-      params: {
-        engine: "google_reverse_image",
-        image_url: publicImageUrl,
-        api_key: process.env.SERPAPI_KEY
-      }
+    const results = await searchWithImage({
+      imageUrl: publicImageUrl,
+      apiKey: process.env.SERPAPI_KEY,
+      socket
     });
-
-    console.log("SERP RESPONSE:", JSON.stringify(serp.data, null, 2));
-
-    const results = serp.data?.image_results || [];
-
-    sendLog(socket, `📦 ${results.length} results found`);
 
     /*
     ============================================
-    STEP 3 — Filter AliExpress + Take Top 10
+    STEP 3 — Filter AliExpress + Top 10
     ============================================
     */
 
     const aliexpressLinks = results
-      .filter(r => r.link && r.link.includes("aliexpress.com"))
+      .filter(r => r.link?.includes("aliexpress.com"))
       .slice(0, 10);
 
     sendLog(socket, `🛍 AliExpress products: ${aliexpressLinks.length}`);
@@ -186,7 +176,7 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
         try {
 
-          sendLog(socket, `🤖 Comparing ${item.title || "Product"}...`);
+          sendLog(socket, `🤖 Comparing ${item.title || "Product"}`);
 
           const score = await compareImages(
             publicImageUrl,
@@ -213,7 +203,7 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     /*
     ============================================
-    STEP 5 — Filter Score ≥ 70 + Sort
+    STEP 5 — Filter Score ≥ 70
     ============================================
     */
 
@@ -226,7 +216,7 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     /*
     ============================================
-    STEP 6 — Return Results
+    STEP 6 — RETURN RESULTS
     ============================================
     */
 
@@ -236,8 +226,6 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
     });
 
   } catch (err) {
-
-    console.error(err);
 
     sendLog(socket, "🔥 PIPELINE FAILED", "error");
 
