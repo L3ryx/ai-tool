@@ -111,49 +111,6 @@ async function compareImages(imageA, imageB) {
 
 /*
 ====================================================
-EXTRACT ALL IMAGES FROM PRODUCT PAGE
-====================================================
-*/
-
-async function extractImagesFromProductPage(url) {
-
-  try {
-
-    const page = await axios.get(url, {
-      timeout: 15000,
-      headers: {
-        "User-Agent": "Mozilla/5.0"
-      }
-    });
-
-    const $ = cheerio.load(page.data);
-
-    let images = [];
-
-    $("img").each((i, el) => {
-
-      const src = $(el).attr("src");
-
-      if (src && src.startsWith("http")) {
-        images.push(src);
-      }
-
-    });
-
-    // Garder seulement les images uniques
-    images = [...new Set(images)];
-
-    return images.slice(0, 5); // 🔥 On prend 5 images max par produit
-
-  } catch (err) {
-
-    console.log("❌ Failed extracting images");
-    return [];
-  }
-}
-
-/*
-====================================================
 ANALYZE ROUTE
 ====================================================
 */
@@ -169,12 +126,6 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
   try {
 
-    /*
-    ====================================================
-    STEP 1 — Upload Image
-    ====================================================
-    */
-
     sendLog(socket, "📤 Uploading image to ImgBB...");
 
     const publicImageUrl = await uploadToImgBB(req.file.buffer);
@@ -183,7 +134,7 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     /*
     ====================================================
-    STEP 2 — SerpAPI Search
+    STEP 1 — SERPAPI SEARCH
     ====================================================
     */
 
@@ -193,9 +144,11 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
       socket
     });
 
+    sendLog(socket, `🔎 ${serpResults.length} results found`);
+
     /*
     ====================================================
-    STEP 3 — Filter AliExpress
+    STEP 2 — FILTER ALIEXPRESS
     ====================================================
     */
 
@@ -211,69 +164,74 @@ app.post("/analyze", upload.single("image"), async (req, res) => {
 
     }).slice(0, 10);
 
-    sendLog(socket, `🛍 ${aliexpressProducts.length} products found`);
+    sendLog(socket, `🛍 ${aliexpressProducts.length} AliExpress products`);
 
     /*
     ====================================================
-    STEP 4 — Extract Product Images + Compare
+    STEP 3 — USE IMAGES RETURNED BY SERPAPI
     ====================================================
     */
 
-    const finalResults = [];
+    const productImages = aliexpressProducts.map(product => {
 
-    for (const product of aliexpressProducts) {
+      return {
+        url: product.link,
+        title: product.title,
+        image: product.thumbnail || product.image || null
+      };
 
-      if (!product.link) continue;
+    }).filter(p => p.image);
 
-      sendLog(socket, `🔎 Extracting images from ${product.link}`);
+    sendLog(socket, `🖼 ${productImages.length} images ready for comparison`);
 
-      const images = await extractImagesFromProductPage(product.link);
+    /*
+    ====================================================
+    STEP 4 — OPENAI COMPARISON
+    ====================================================
+    */
 
-      if (images.length === 0) continue;
+    const comparisons = await Promise.all(
 
-      let scores = [];
-
-      for (const img of images) {
+      productImages.map(async (product) => {
 
         try {
 
-          sendLog(socket, "🤖 Comparing extracted image...");
+          sendLog(socket, `🤖 Comparing ${product.title || "Product"}`);
 
-          const score = await compareImages(publicImageUrl, img);
+          const score = await compareImages(
+            publicImageUrl,
+            product.image
+          );
 
-          scores.push(score);
+          return {
+            url: product.url,
+            title: product.title,
+            image: product.image,
+            similarity: score
+          };
 
         } catch (err) {
-          continue;
+
+          sendLog(socket, "❌ AI comparison failed", "error");
+          return null;
         }
 
-      }
+      })
 
-      if (scores.length === 0) continue;
-
-      const avgScore =
-        scores.reduce((a, b) => a + b, 0) / scores.length;
-
-      if (avgScore >= 70) {
-
-        finalResults.push({
-          url: product.link,
-          title: product.title,
-          averageScore: avgScore,
-          images
-        });
-
-      }
-
-    }
-
-    sendLog(socket, `🎯 Final Matches: ${finalResults.length}`);
+    );
 
     /*
     ====================================================
-    STEP 5 — Return Results
+    STEP 5 — FILTER SCORE ≥ 70
     ====================================================
     */
+
+    const finalResults = comparisons
+      .filter(Boolean)
+      .filter(p => p.similarity >= 70)
+      .sort((a, b) => b.similarity - a.similarity);
+
+    sendLog(socket, `🎯 Final matches: ${finalResults.length}`);
 
     res.json({
       image: publicImageUrl,
