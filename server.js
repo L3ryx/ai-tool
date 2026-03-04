@@ -31,7 +31,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
     if(!req.file)
       return res.status(400).json({ error:"No image uploaded" });
 
-    /* ================= 1️⃣ Upload Image To ImgBB ================= */
+    /* ================= 1️⃣ Upload Image ================= */
 
     logStep(socket,"📤 Uploading image to ImgBB...");
 
@@ -46,9 +46,9 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
 
     const imageUrl = imgRes.data.data.url;
 
-    /* ================= 2️⃣ Search Image Directly On AliExpress ================= */
+    /* ================= 2️⃣ AliExpress Image Search ================= */
 
-    logStep(socket,"🔎 Searching image on AliExpress...");
+    logStep(socket,"🔎 Searching directly on AliExpress...");
 
     const search = await axios.get("https://serpapi.com/search",{
       params:{
@@ -64,7 +64,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
 
     const topProducts = products.slice(0,10);
 
-    /* ================= 3️⃣ Compare Top 10 Products ================= */
+    /* ================= 3️⃣ Compare 10 Products ================= */
 
     let scoredResults = [];
 
@@ -72,7 +72,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
 
       if(!product.image) continue;
 
-      logStep(socket,"🤖 Comparing product: " + product.title);
+      logStep(socket,"🤖 Comparing: " + product.title);
 
       try{
 
@@ -85,7 +85,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
               content:[
                 {
                   type:"text",
-                  text:"Compare these images and return ONLY similarity score 0-100"
+                  text:"Compare these images and return only a similarity score from 0 to 100"
                 },
                 {
                   type:"image_url",
@@ -129,7 +129,7 @@ app.post("/analyze", upload.single("image"), async (req,res)=>{
       p.score >= 70 && p.score <= 80
     );
 
-    logStep(socket,"🎯 Results kept (70-80%): " + filtered.length);
+    logStep(socket,"🎯 Final Results: " + filtered.length);
 
     res.json({
       results: filtered
