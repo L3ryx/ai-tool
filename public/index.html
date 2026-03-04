@@ -1,279 +1,356 @@
-require("dotenv").config();
-const express = require("express");
-const multer = require("multer");
-const axios = require("axios");
-const http = require("http");
-const { Server } = require("socket.io");
-const { searchWithImage } = require("./serp");
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>AI Reverse AliExpress Finder</title>
+<script src="/socket.io/socket.io.js"></script>
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+<style>
 
-const upload = multer({
-  storage: multer.memoryStorage()
+/* ================= BACKGROUND ================= */
+
+body {
+  margin:0;
+  overflow:hidden;
+  font-family:Arial;
+  color:white;
+}
+
+canvas {
+  position:fixed;
+  top:0;
+  left:0;
+  z-index:-1;
+}
+
+/* ================= SETTINGS BUTTON ================= */
+
+.settings-btn {
+  position:fixed;
+  top:20px;
+  left:20px;
+  background:#00ff88;
+  border:none;
+  padding:10px 15px;
+  border-radius:8px;
+  font-weight:bold;
+  cursor:pointer;
+  z-index:10;
+}
+
+/* ================= SETTINGS MODAL ================= */
+
+.modal {
+  display:none;
+  position:fixed;
+  top:0;
+  left:0;
+  width:100%;
+  height:100%;
+  background:rgba(0,0,0,0.8);
+  justify-content:center;
+  align-items:center;
+  z-index:20;
+}
+
+.modal-content {
+  background:#111;
+  padding:30px;
+  border-radius:15px;
+  width:400px;
+  text-align:center;
+}
+
+.modal-content input {
+  width:100%;
+  padding:10px;
+  margin:8px 0;
+  border-radius:8px;
+  border:none;
+}
+
+.modal-content button {
+  background:#00ff88;
+  border:none;
+  padding:10px;
+  width:100%;
+  border-radius:8px;
+  font-weight:bold;
+  cursor:pointer;
+}
+
+/* ================= MAIN UI ================= */
+
+.container {
+  position:relative;
+  z-index:2;
+  width:700px;
+  margin:auto;
+  text-align:center;
+  padding-top:80px;
+}
+
+.api-row {
+  display:flex;
+  gap:10px;
+  margin-bottom:10px;
+}
+
+.api-row input {
+  flex:1;
+  padding:10px;
+  border-radius:8px;
+  border:none;
+}
+
+.file-input {
+  width:100%;
+  padding:10px;
+  margin:6px 0;
+  border-radius:8px;
+  border:none;
+}
+
+button.main-btn {
+  background:#00ff88;
+  border:none;
+  padding:15px;
+  width:100%;
+  font-size:18px;
+  font-weight:bold;
+  border-radius:10px;
+  cursor:pointer;
+}
+
+.progress {
+  width:100%;
+  background:#111;
+  border-radius:20px;
+  margin-top:15px;
+}
+
+.bar {
+  height:20px;
+  width:0%;
+  background:linear-gradient(90deg,#00ff88,#00ccff);
+  border-radius:20px;
+  transition:0.4s;
+}
+
+.logs {
+  margin-top:10px;
+  max-height:150px;
+  overflow:auto;
+  background:#111;
+  padding:10px;
+  border-radius:10px;
+  font-size:13px;
+  text-align:left;
+  color:#00ff88;
+}
+
+.error-log {
+  color:red;
+  font-weight:bold;
+}
+
+.product {
+  background:#111;
+  margin:10px 0;
+  padding:10px;
+  border-radius:10px;
+}
+
+.score-green {color:#00ff88;}
+.score-orange {color:orange;}
+.score-red {color:red;}
+
+</style>
+</head>
+<body>
+
+<!-- MATRIX BACKGROUND -->
+<canvas id="matrix"></canvas>
+
+<!-- SETTINGS BUTTON -->
+<button class="settings-btn" onclick="toggleModal()">
+⚙ Settings
+</button>
+
+<!-- SETTINGS MODAL -->
+<div class="modal" id="settingsModal">
+  <div class="modal-content">
+    <h3>API Settings</h3>
+
+    <input type="text" id="imgbb" placeholder="IMGBB KEY">
+    <input type="text" id="serpapi" placeholder="SERPAPI KEY">
+    <input type="text" id="openai" placeholder="OPENAI KEY">
+
+    <button onclick="saveSettings()">Save</button>
+    <button onclick="toggleModal()" style="margin-top:10px;background:red;color:white;">
+      Close
+    </button>
+
+  </div>
+</div>
+
+<div class="container">
+
+<h2>🔥 AI Reverse AliExpress Finder</h2>
+
+<input type="file" id="image" class="file-input">
+
+<button class="main-btn" onclick="start()">START</button>
+
+<div class="progress">
+  <div class="bar" id="bar"></div>
+</div>
+
+<div class="logs" id="logs"></div>
+<div id="results"></div>
+
+</div>
+
+<script>
+
+/* ================= MATRIX ================= */
+
+const canvas = document.getElementById("matrix");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const letters = "01ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const fontSize = 14;
+const columns = canvas.width / fontSize;
+const drops = [];
+
+for(let i=0;i<columns;i++){
+  drops[i]=1;
+}
+
+function drawMatrix(){
+  ctx.fillStyle="rgba(0,0,0,0.05)";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  ctx.fillStyle="#00ff88";
+  ctx.font = fontSize+"px monospace";
+
+  for(let i=0;i<drops.length;i++){
+    const text = letters[Math.floor(Math.random()*letters.length)];
+    ctx.fillText(text,i*fontSize,drops[i]*fontSize);
+
+    if(drops[i]*fontSize > canvas.height && Math.random()>0.975){
+      drops[i]=0;
+    }
+
+    drops[i]++;
+  }
+}
+
+setInterval(drawMatrix,50);
+
+/* ================= SETTINGS ================= */
+
+function toggleModal(){
+  const modal = document.getElementById("settingsModal");
+  modal.style.display =
+    modal.style.display === "flex" ? "none" : "flex";
+}
+
+function saveSettings(){
+  toggleModal();
+}
+
+/* ================= SOCKET ================= */
+
+const socket = io();
+let socketId;
+
+socket.on("connect", ()=> socketId = socket.id);
+
+socket.on("log", msg=>{
+  document.getElementById("logs").innerHTML += msg+"<br>";
+  document.getElementById("logs").scrollTop = 9999;
 });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static("public"));
+socket.on("errorLog", msg=>{
+  document.getElementById("logs").innerHTML +=
+    `<div class='error-log'>❌ ${msg}</div>`;
+});
 
-/*
-====================================================
-LOG SYSTEM
-====================================================
-*/
+/* ================= START PIPELINE ================= */
 
-function sendLog(socket, message, type = "info") {
+async function start(){
 
-  console.log(`[${type}] ${message}`);
+  document.getElementById("logs").innerHTML="";
+  document.getElementById("results").innerHTML="";
+  document.getElementById("bar").style.width="20%";
 
-  if (socket) {
-    socket.emit("log", {
-      message,
-      type,
-      time: new Date().toISOString()
-    });
-  }
-}
-
-/*
-====================================================
-UPLOAD TO IMGBB
-====================================================
-*/
-
-async function uploadToImgBB(buffer) {
-
-  const base64 = buffer.toString("base64");
-
-  const response = await axios.post(
-    "https://api.imgbb.com/1/upload",
-    new URLSearchParams({
-      key: process.env.IMGBB_KEY,
-      image: base64
-    }),
-    {
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
-      }
-    }
-  );
-
-  return response.data.data.url;
-}
-
-/*
-====================================================
-OPENAI IMAGE COMPARISON
-====================================================
-*/
-
-async function compareImages(imageA, imageB) {
-
-  const response = await axios.post(
-    "https://api.openai.com/v1/chat/completions",
-    {
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Compare these two product images and return ONLY a similarity score between 0 and 100."
-            },
-            {
-              type: "image_url",
-              image_url: { url: imageA }
-            },
-            {
-              type: "image_url",
-              image_url: { url: imageB }
-            }
-          ]
-        }
-      ],
-      max_tokens: 10
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      }
-    }
-  );
-
-  const text = response.data.choices[0].message.content;
-  const score = parseInt(text.match(/\d+/)?.[0] || "0");
-
-  return score;
-}
-
-/*
-====================================================
-ANALYZE ROUTE
-====================================================
-*/
-
-app.post("/analyze", upload.single("image"), async (req, res) => {
-
-  const socketId = req.body.socketId;
-  const socket = io.sockets.sockets.get(socketId);
-
-  if (!req.file) {
-    return res.status(400).json({ error: "No image uploaded" });
-  }
+  const form = new FormData();
+  form.append("image", document.getElementById("image").files[0]);
+  form.append("imgbb", document.getElementById("imgbb").value);
+  form.append("serpapi", document.getElementById("serpapi").value);
+  form.append("openai", document.getElementById("openai").value);
+  form.append("socketId", socketId);
 
   try {
 
-    sendLog(socket, "📤 Uploading image to ImgBB...");
-
-    const publicImageUrl = await uploadToImgBB(req.file.buffer);
-
-    sendLog(socket, "✅ Image uploaded");
-
-    /*
-    ====================================================
-    STEP 1 — SERPAPI SEARCH
-    ====================================================
-    */
-
-    const serpResults = await searchWithImage({
-      imageUrl: publicImageUrl,
-      apiKey: process.env.SERPAPI_KEY,
-      socket
+    const res = await fetch("/analyze",{
+      method:"POST",
+      body:form
     });
 
-    sendLog(socket, `🔎 ${serpResults.length} results found`);
+    const data = await res.json();
 
-    /*
-    ====================================================
-    STEP 2 — FILTER ALIEXPRESS
-    ====================================================
-    */
+    if(data.error){
+      document.getElementById("logs").innerHTML +=
+        `<div class="error-log">
+          🚨 ${data.error}<br>
+          ${data.detail || ""}
+        </div>`;
+    }
 
-    const aliexpressProducts = serpResults.filter(r => {
+    document.getElementById("bar").style.width="100%";
+    displayResults(data.results);
 
-      const combined = (
-        (r.link || "") +
-        (r.title || "") +
-        (r.snippet || "")
-      ).toLowerCase();
+  } catch(err){
+    document.getElementById("logs").innerHTML +=
+      `<div class="error-log">
+        ❌ Request failed: ${err.message}
+      </div>`;
+  }
+}
 
-      return combined.includes("aliexpress");
+function displayResults(results){
 
-    }).slice(0, 10);
+  const container = document.getElementById("results");
 
-    sendLog(socket, `🛍 ${aliexpressProducts.length} AliExpress products`);
-
-    /*
-    ====================================================
-    STEP 3 — USE IMAGES RETURNED BY SERPAPI
-    ====================================================
-    */
-
-    const productImages = aliexpressProducts.map(product => {
-
-      return {
-        url: product.link,
-        title: product.title,
-        image: product.thumbnail || product.image || null
-      };
-
-    }).filter(p => p.image);
-
-    sendLog(socket, `🖼 ${productImages.length} images ready for comparison`);
-
-    /*
-    ====================================================
-    STEP 4 — OPENAI COMPARISON
-    ====================================================
-    */
-
-    const comparisons = await Promise.all(
-
-      productImages.map(async (product) => {
-
-        try {
-
-          sendLog(socket, `🤖 Comparing ${product.title || "Product"}`);
-
-          const score = await compareImages(
-            publicImageUrl,
-            product.image
-          );
-
-          return {
-            url: product.url,
-            title: product.title,
-            image: product.image,
-            similarity: score
-          };
-
-        } catch (err) {
-
-          sendLog(socket, "❌ AI comparison failed", "error");
-          return null;
-        }
-
-      })
-
-    );
-
-    /*
-    ====================================================
-    STEP 5 — FILTER SCORE ≥ 70
-    ====================================================
-    */
-
-    const finalResults = comparisons
-      .filter(Boolean)
-      .filter(p => p.similarity >= 70)
-      .sort((a, b) => b.similarity - a.similarity);
-
-    sendLog(socket, `🎯 Final matches: ${finalResults.length}`);
-
-    res.json({
-      image: publicImageUrl,
-      results: finalResults
-    });
-
-  } catch (err) {
-
-    console.error(err);
-    sendLog(socket, "🔥 PIPELINE FAILED", "error");
-
-    res.status(500).json({
-      error: "Pipeline failed",
-      detail: err.message
-    });
-
+  if(!results || results.length===0){
+    container.innerHTML =
+      "<div class='error-log'>No AliExpress matches found.</div>";
+    return;
   }
 
-});
-
-/*
-====================================================
-SOCKET
-====================================================
-*/
-
-io.on("connection", (socket) => {
-
-  socket.emit("connected", {
-    socketId: socket.id
+  results.forEach(p=>{
+    container.innerHTML += `
+      <div class="product">
+        <img src="${p.thumbnail}" width="80"><br>
+        <b>${p.title}</b><br>
+        <span class="${
+          p.score>=75?"score-green":
+          p.score>=40?"score-orange":"score-red"
+        }">
+        Score: ${p.score}
+        </span><br>
+        <a href="${p.link}" target="_blank">View</a>
+      </div>
+    `;
   });
+}
 
-  console.log("🟢 Client connected");
+</script>
 
-});
-
-/*
-====================================================
-START SERVER
-====================================================
-*/
-
-server.listen(process.env.PORT || 3000, () => {
-  console.log("🚀 Server running");
-});
+</body>
+</html>
